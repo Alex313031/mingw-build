@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.1"
+SCRIPTVER="2.0.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -34,8 +34,10 @@ MINGW_W64_BRANCH="v14.x"
 BINUTILS_BRANCH="binutils-2_46-branch"
 GCC_BRANCH="releases/gcc-16"
 
+# Controls minimum Windows target, should always be set non-zero later.
 WIN32_WINNT="0"
 
+# Thread model
 ENABLE_THREADS="--enable-threads=posix"
 LINKED_RUNTIME="msvcrt"
 
@@ -74,6 +76,7 @@ Options:
   -h, --help                   Show help
   --version                    Show version
   -v, --verbose                Echo build output to the console as well as the log file
+  -a, --all                    Build all three archs: i586, i686 and x86_64
   -j <count>, --jobs <count>   Override make job count (default: $JOB_COUNT)
   -p <path>, --prefix <path>   Install location (default: $ROOT_PATH/<arch>)
   -r <path>, --root <path>     Location for sources, build artifacts and the resulting compiler (default: $ROOT_PATH)
@@ -142,7 +145,7 @@ execute() {
         printf "${CYA}(%d/%d): %s${c0}\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$info_msg"
         CURRENT_STEP=$((CURRENT_STEP + 1))
     fi
-    if [ "$VERBOSE" ]; then
+    if [ "$VERBOSE" == "1" ]; then
         # mirror output to the console as well as the log file
         # (process substitution keeps "$@"'s exit status, unlike a pipe to tee)
         "$@" > >(tee -a "$LOG_FILE") 2>&1 || error_exit "$error_msg, check $LOG_FILE for details."
@@ -182,7 +185,7 @@ clean_build() {
     find "$ROOT_PATH" -mindepth 1 -maxdepth 1 \
         ! -name "$(basename "$LOG_FILE").old" -exec rm -rfv {} +
 
-    printf "${GRE}Cleaned '%s'.${c0}\n" "$ROOT_PATH"
+    printf "${YEL}Cleaned '%s'.${c0}\n" "$ROOT_PATH"
 }
 
 change_dir() {
@@ -225,9 +228,14 @@ apply_patches() {
     git apply --reject ../patches/gcc-stdcall-align.patch &&
     git apply --reject ../patches/gcc-trap-terminate.patch &&
     #git apply --reject ../patches/gdb-alternate-main.patch &&
+    # GetDynamicTimeZoneInformation() is Vista+ (needs _WIN32_WINNT >= 0x0600);
+    # fall back to GetTimeZoneInformation() for older targets so libstdc++ builds
+    if (( WIN32_WINNT < 0x0600 )); then
+        git apply --reject ../patches/gcc-tzdb-getdynamic.patch
+    fi &&
     cd $SRC_PATH/mingw-w64 &&
     git apply --reject ../patches/gendef-no-comment.patch &&
-    if [ "$WIN32_WINNT" == "0x0500" ] || [ "$WIN32_WINNT" == "0x0400" ]; then
+    if (( WIN32_WINNT < 0x0501 )); then
         git apply --reject ../patches/rand_s-win2k.patch
     fi &&
     touch $SRC_PATH/patches/applied_patches &&
@@ -244,7 +252,7 @@ build() {
     local prefix="$2"
     shift 2
 
-    if [ "$GOT_WIN32_WINNT" ]; then
+    if [ "$WIN32_WINNT" != "0" ]; then
         export _WIN32_WINNT=$WIN32_WINNT
         printf "${GRE}Using _WIN32_WINNT ${_WIN32_WINNT} for build. ${c0}\n"
     fi
@@ -267,11 +275,14 @@ build() {
     # OPT_FLAGS / STRIP_FLAG are controlled by IS_DEBUG. The test is
     # [ "$IS_DEBUG" = true ], NOT [ "$IS_DEBUG" ]: IS_DEBUG defaults to the
     # string "false", which a plain non-empty test would wrongly treat as true.
+    # Baseline flags that everything needs
+    local BASE_FLAGS=" -Wno-maybe-uninitialized -Wno-error"
+    local OPT_FLAGS="$BASE_FLAGS "
     if [ "$IS_DEBUG" = true ]; then
-      local OPT_FLAGS="-Og -g2"
-      local STRIP_FLAG=""
+      local OPT_FLAGS+="-Og -g2"
+      local STRIP_FLAG="-rdynamic"
     else
-      local OPT_FLAGS="-O3 -g0"
+      local OPT_FLAGS+="-O3 -g0"
       local STRIP_FLAG="-s"
     fi
     # TARGET_LDFLAGS starts from the strip setting; arch blocks may append to it
@@ -370,13 +381,17 @@ build() {
 
     if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then
         # Causes top level configure warnings: Ignore, they are harmless
-        local x86_dwarf2="--disable-sjlj-exceptions --with-dwarf2"
+        local x86_dwarf="--disable-sjlj-exceptions --with-dwarf2"
         local crt_lib="--enable-lib32 --disable-lib64"
     elif [ "$arch" = "x86_64" ]; then
-        local x86_dwarf2="--with-dwarf3"
+        local x86_dwarf="--with-dwarf3"
         local crt_lib="--enable-lib64 --disable-lib32"
     else
       printf "No matching arch!"
+    fi
+    local VFLAGS=""
+    if [ "$VERBOSE" == "1" ]; then
+      VFLAGS+=" VERBOSE=1 V=1"
     fi
 
     create_dir "$bld_path/binutils" &&
@@ -391,7 +406,7 @@ build() {
             CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
     execute "($arch): Building Binutils" "" \
-        make -j $JOB_COUNT
+        make -j $JOB_COUNT $VFLAGS
 
     execute "($arch): Installing Binutils" "" \
         make install
@@ -412,17 +427,17 @@ build() {
     create_dir "$bld_path/gcc"
     change_dir "$bld_path/gcc"
 
+    local GCC_FLAGS="$MARCH $x86_dwarf"
     execute "($arch): Configuring GCC" "" \
         "$SRC_PATH/gcc/configure" --target="$host" --disable-shared \
             --enable-static --disable-multilib --prefix="$prefix" \
-            --enable-languages=c,c++ --disable-nls $ENABLE_THREADS \
-            $MARCH $x86_dwarf2 \
+            --enable-languages=c,c++ --disable-nls $ENABLE_THREADS $GCC_FLAGS \
             CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS" \
             CFLAGS_FOR_TARGET="$TARGET_CFLAGS" CXXFLAGS_FOR_TARGET="$TARGET_CXXFLAGS" \
             LDFLAGS_FOR_TARGET="$TARGET_LDFLAGS"
 
     execute "($arch): Building GCC (all-gcc)" "" \
-        make -j $JOB_COUNT all-gcc
+        make -j $JOB_COUNT all-gcc $VFLAGS
     execute "($arch): Installing GCC (install-gcc)" "" \
         make install-gcc
 
@@ -438,7 +453,7 @@ build() {
             CFLAGS="$TARGET_CFLAGS" CXXFLAGS="$TARGET_CXXFLAGS" LDFLAGS="$TARGET_LDFLAGS"
 
     execute "($arch): Building MinGW CRT" "" \
-        make -j $JOB_COUNT VERBOSE=1
+        make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing MinGW CRT" "" \
         make install
 
@@ -451,7 +466,7 @@ build() {
         CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
     execute "($arch): Building MinGW gendef" "" \
-        make -j $JOB_COUNT
+        make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing MinGW gendef" "" \
         cp -v gendef $prefix/bin
 
@@ -466,7 +481,7 @@ build() {
                 CFLAGS="$TARGET_CFLAGS" CXXFLAGS="$TARGET_CXXFLAGS" LDFLAGS="$TARGET_LDFLAGS"
 
         execute "($arch): Building winpthreads" "" \
-            make -j $JOB_COUNT
+            make -j $JOB_COUNT $VFLAGS
 
         execute "($arch): Installing winpthreads" "" \
             make install
@@ -475,7 +490,7 @@ build() {
     change_dir "$bld_path/gcc"
 
     execute "($arch): Building final GCC" "" \
-        make -j $JOB_COUNT
+        make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing final GCC + libs" "" \
         make install
 }
@@ -682,6 +697,13 @@ while :; do
                 export GOT_WIN32_WINNT=1
             fi
             ;;
+        -a|--all)
+            # build every arch; each picks its own _WIN32_WINNT default at
+            # dispatch unless the user passed --win32-winnt
+            BUILD_I586=1
+            BUILD_I686=1
+            BUILD_X86_64=1
+            ;;
         --mmx)
             export WANT_MMX=1
             ;;
@@ -819,6 +841,7 @@ done
 ADD_TO_PATH=()
 
 if [ "$BUILD_I586" ]; then
+    [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0400"
     if [ "$WANT_MMX" ]; then
       USE_MMX=true
     fi
@@ -827,6 +850,7 @@ if [ "$BUILD_I586" ]; then
 fi
 
 if [ "$BUILD_I686" ]; then
+    [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0500"
     if [ "$WANT_SSE2" ]; then
       USE_SSE2=true
     fi
@@ -844,6 +868,7 @@ if [ "$BUILD_I686" ]; then
 fi
 
 if [ "$BUILD_X86_64" ]; then
+    [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0502"
     if [ "$WANT_SSE3" ]; then
       USE_SSE3=true
     fi

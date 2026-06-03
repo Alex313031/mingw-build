@@ -14,7 +14,7 @@ contrast, a trap instruction accomplishes both.
  #endif
 --- a/libstdc++-v3/libsupc++/exception
 +++ b/libstdc++-v3/libsupc++/exception
-@@ -160,4 +160,6 @@
+@@ -174,4 +174,6 @@
    void __verbose_terminate_handler();
  
 +  void __trap_terminate_handler();

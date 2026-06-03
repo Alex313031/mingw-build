@@ -1,0 +1,50 @@
+GCC 16 (commit e28494e08092c4096a015563c0ba0494ce1edf81) uses
+GetDynamicTimeZoneInformation() in std::chrono's Windows time-zone detection.
+That function and DYNAMIC_TIME_ZONE_INFORMATION are only available on Windows
+Vista and later (mingw-w64 gates them behind _WIN32_WINNT >= 0x0600), so
+libstdc++ fails to build for older targets (Windows 2000/XP, NT) with:
+  'GetDynamicTimeZoneInformation' was not declared in this scope
+
+Fall back to GetTimeZoneInformation() / TIME_ZONE_INFORMATION, which has been
+available since Windows 2000. The dynamic-only fields are substituted:
+  - TimeZoneKeyName        -> StandardName (best available zone-key proxy)
+  - DynamicDaylightTimeDisabled -> (return == TIME_ZONE_ID_UNKNOWN)
+On systems where StandardName does not match a Windows zone key the detection
+simply returns {} and current_zone() falls through to its other heuristics.
+
+diff --git a/libstdc++-v3/src/c++20/tzdb.cc b/libstdc++-v3/src/c++20/tzdb.cc
+index b0fbfc46a..7d07fd4c7 100644
+--- a/libstdc++-v3/src/c++20/tzdb.cc
++++ b/libstdc++-v3/src/c++20/tzdb.cc
+@@ -1786,17 +1786,26 @@ namespace std::chrono
+     string_view
+     detect_windows_zone() noexcept
+     {
+-      DYNAMIC_TIME_ZONE_INFORMATION information{};
+-      if (GetDynamicTimeZoneInformation(&information) == TIME_ZONE_ID_INVALID)
++      // GetDynamicTimeZoneInformation() and DYNAMIC_TIME_ZONE_INFORMATION are
++      // only available on Windows Vista and later. Use GetTimeZoneInformation()
++      // instead so this builds for older targets (Windows 2000/XP and NT).
++      TIME_ZONE_INFORMATION information{};
++      const DWORD tz_id = GetTimeZoneInformation(&information);
++      if (tz_id == TIME_ZONE_ID_INVALID)
+ 	return {};
+ 
+       constexpr SYSTEMTIME all_zero_time{};
+-      const wstring_view zone_name{ information.TimeZoneKeyName };
++      // TIME_ZONE_INFORMATION has no TimeZoneKeyName; StandardName is the best
++      // available proxy for the Windows zone key on pre-Vista systems.
++      const wstring_view zone_name{ information.StandardName };
+       auto equal = [](const SYSTEMTIME &lhs, const SYSTEMTIME &rhs) noexcept
+ 	{ return memcmp(&lhs, &rhs, sizeof(SYSTEMTIME)) == 0; };
+       // The logic is copied from icu, couldn't find the source.
+-      // Detect if DST is disabled.
+-      if (information.DynamicDaylightTimeDisabled
++      // Detect if DST is disabled. TIME_ZONE_INFORMATION has no
++      // DynamicDaylightTimeDisabled field; GetTimeZoneInformation() returns
++      // TIME_ZONE_ID_UNKNOWN when the zone does not observe DST.
++      const bool daylight_disabled = (tz_id == TIME_ZONE_ID_UNKNOWN);
++      if (daylight_disabled
+ 	  && equal(information.StandardDate, information.DaylightDate)
+ 	  && ((!zone_name.empty()
+ 	       && equal(information.StandardDate, all_zero_time))
