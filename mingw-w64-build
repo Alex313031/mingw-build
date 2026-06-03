@@ -30,9 +30,9 @@ MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64.git"
 BINUTILS_URL="https://git.sr.ht/~sourceware/binutils-gdb"
 GCC_URL="https://git.sr.ht/~sourceware/gcc"
 # What branches to checkout
-MINGW_W64_BRANCH="v13.x"
-BINUTILS_BRANCH="binutils-2_45-branch"
-GCC_BRANCH="releases/gcc-15"
+MINGW_W64_BRANCH="v14.x"
+BINUTILS_BRANCH="binutils-2_46-branch"
+GCC_BRANCH="releases/gcc-16"
 
 WIN32_WINNT="0"
 
