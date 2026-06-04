@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.4"
+SCRIPTVER="2.0.5"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -223,26 +223,39 @@ download_sources() {
 
 apply_patches() {
     printf "${YEL}Applying patches...${c0}\n"
-    mkdir -p $SRC_PATH/patches/ &&
-    cp -f -v $HERE/patches/*.patch $SRC_PATH/patches/ &&
-    cd $SRC_PATH/binutils &&
-    git apply --reject ../patches/binutils-dlltool-zero-ordinals.patch &&
-    cd $SRC_PATH/gcc &&
-    git apply --reject ../patches/gcc-stdcall-align.patch &&
-    git apply --reject ../patches/gcc-trap-terminate.patch &&
-    #git apply --reject ../patches/gdb-alternate-main.patch &&
+    create_dir "$SRC_PATH/patches"
+    execute "" "Unable to copy patches" \
+        cp -fv "$HERE"/patches/*.patch "$SRC_PATH/patches/"
+
+    change_dir "$SRC_PATH/binutils"
+    execute "" "Failed to apply binutils-dlltool-zero-ordinals.patch" \
+        git apply --reject ../patches/binutils-dlltool-zero-ordinals.patch
+
+    change_dir "$SRC_PATH/gcc"
+    execute "" "Failed to apply gcc-stdcall-align.patch" \
+        git apply --reject ../patches/gcc-stdcall-align.patch
+    execute "" "Failed to apply gcc-trap-terminate.patch" \
+        git apply --reject ../patches/gcc-trap-terminate.patch
+    #execute "" "Failed to apply gdb-alternate-main.patch" \
+    #    git apply --reject ../patches/gdb-alternate-main.patch
     # GetDynamicTimeZoneInformation() is Vista+ (needs _WIN32_WINNT >= 0x0600);
     # fall back to GetTimeZoneInformation() for older targets so libstdc++ builds
     if (( WIN32_WINNT < 0x0600 )); then
-        git apply --reject ../patches/gcc-tzdb-getdynamic.patch
-    fi &&
-    cd $SRC_PATH/mingw-w64 &&
-    git apply --reject ../patches/gendef-no-comment.patch &&
+        execute "" "Failed to apply gcc-tzdb-getdynamic.patch" \
+            git apply --reject ../patches/gcc-tzdb-getdynamic.patch
+    fi
+
+    change_dir "$SRC_PATH/mingw-w64"
+    execute "" "Failed to apply gendef-no-comment.patch" \
+        git apply --reject ../patches/gendef-no-comment.patch
     if (( WIN32_WINNT < 0x0501 )); then
-        git apply --reject ../patches/rand_s-win2k.patch
-    fi &&
-    touch $SRC_PATH/patches/applied_patches &&
-    cd $HERE
+        execute "" "Failed to apply rand_s-win2k.patch" \
+            git apply --reject ../patches/rand_s-win2k.patch
+    fi
+
+    execute "" "Unable to mark patches as applied" \
+        touch "$SRC_PATH/patches/applied_patches"
+    change_dir "$HERE"
 }
 
 build() {
@@ -282,10 +295,10 @@ build() {
     local BASE_FLAGS=" -Wno-maybe-uninitialized -Wno-unused-parameter -Wno-error"
     local OPT_FLAGS="$BASE_FLAGS "
     if [ "$IS_DEBUG" = true ]; then
-      local OPT_FLAGS+="-Og -g2"
+      OPT_FLAGS+="-Og -g2"
       local STRIP_FLAG=""
     else
-      local OPT_FLAGS+="-O3 -g0"
+      OPT_FLAGS+="-O3 -g0"
       local STRIP_FLAG="-s"
     fi
     # TARGET_LDFLAGS starts from the strip setting; arch blocks may append to it
@@ -390,7 +403,7 @@ build() {
         local x86_dwarf=""
         local crt_lib="--enable-lib64 --disable-lib32"
     else
-      printf "No matching arch!"
+      error_exit "No matching arch: '$arch'"
     fi
     local VFLAGS=""
     if [ "$VERBOSE" == "1" ]; then
@@ -412,7 +425,7 @@ build() {
         make -j $JOB_COUNT $VFLAGS
 
     execute "($arch): Installing Binutils" "" \
-        make install
+        make install $VFLAGS
 
     create_dir "$bld_path/mingw-w64-headers"
     change_dir "$bld_path/mingw-w64-headers"
@@ -425,7 +438,7 @@ build() {
             CFLAGS="$TARGET_CFLAGS" CXXFLAGS="$TARGET_CXXFLAGS" LDFLAGS="$TARGET_LDFLAGS"
 
     execute "($arch): Installing MinGW headers" "" \
-        make install
+        make install $VFLAGS
 
     create_dir "$bld_path/gcc"
     change_dir "$bld_path/gcc"
@@ -442,7 +455,7 @@ build() {
     execute "($arch): Building GCC (all-gcc)" "" \
         make -j $JOB_COUNT all-gcc $VFLAGS
     execute "($arch): Installing GCC (install-gcc)" "" \
-        make install-gcc
+        make install-gcc $VFLAGS
 
     create_dir "$bld_path/mingw-w64-crt"
     change_dir "$bld_path/mingw-w64-crt"
@@ -458,7 +471,7 @@ build() {
     execute "($arch): Building MinGW CRT" "" \
         make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing MinGW CRT" "" \
-        make install
+        make install $VFLAGS
 
     create_dir "$bld_path/mingw-w64-gendef"
     change_dir "$bld_path/mingw-w64-gendef"
@@ -487,7 +500,7 @@ build() {
             make -j $JOB_COUNT $VFLAGS
 
         execute "($arch): Installing winpthreads" "" \
-            make install
+            make install $VFLAGS
     fi
 
     change_dir "$bld_path/gcc"
@@ -495,7 +508,7 @@ build() {
     execute "($arch): Building final GCC" "" \
         make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing final GCC + libs" "" \
-        make install
+        make install $VFLAGS
 }
 
 while :; do
@@ -666,7 +679,7 @@ while :; do
         --win32-winnt)
             if [ "$2" ]; then
                 WIN32_WINNT="$2"
-                export GOT_WIN32_WINNT=1
+                GOT_WIN32_WINNT=1
                 shift
             else
                 arg_error "'--win32-winnt' requires a non-empty option argument"
@@ -674,7 +687,7 @@ while :; do
             ;;
         --win32-winnt=?*)
             WIN32_WINNT=${1#*=}
-            export GOT_WIN32_WINNT=1
+            GOT_WIN32_WINNT=1
             ;;
         --win32-winnt=)
             arg_error "'--win32-winnt' requires a non-empty option argument"
@@ -683,21 +696,21 @@ while :; do
             BUILD_I586=1
             if [ ! "$GOT_WIN32_WINNT" ]; then
                 WIN32_WINNT="0x0400"
-                export GOT_WIN32_WINNT=1
+                GOT_WIN32_WINNT=1
             fi
             ;;
         i686|x32)
             BUILD_I686=1
             if [ ! "$GOT_WIN32_WINNT" ]; then
                WIN32_WINNT="0x0500"
-               export GOT_WIN32_WINNT=1
+               GOT_WIN32_WINNT=1
             fi
             ;;
         x86_64|x64)
             BUILD_X86_64=1
             if [ ! "$GOT_WIN32_WINNT" ]; then
                 WIN32_WINNT="0x0502"
-                export GOT_WIN32_WINNT=1
+                GOT_WIN32_WINNT=1
             fi
             ;;
         -a|--all)
@@ -708,28 +721,28 @@ while :; do
             BUILD_X86_64=1
             ;;
         --mmx)
-            export WANT_MMX=1
+            WANT_MMX=1
             ;;
         --sse2)
-            export WANT_SSE2=1
+            WANT_SSE2=1
             ;;
         --sse3)
-            export WANT_SSE3=1
+            WANT_SSE3=1
             ;;
         --sse41)
-            export WANT_SSE41=1
+            WANT_SSE41=1
             ;;
         --sse42)
-            export WANT_SSE42=1
+            WANT_SSE42=1
             ;;
         --avx)
-            export WANT_AVX=1
+            WANT_AVX=1
             ;;
         --avx2)
-            export WANT_AVX2=1
+            WANT_AVX2=1
             ;;
         --avx512)
-            export WANT_AVX512=1
+            WANT_AVX512=1
             ;;
         --)
             shift
