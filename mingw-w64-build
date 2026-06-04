@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.5"
+SCRIPTVER="2.0.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -26,12 +26,12 @@ BLD_PATH="$ROOT_PATH/bld"
 LOG_FILE="$ROOT_PATH/build.log"
 
 # Source URLs, using GitHub instead of originals for cloning speed
-MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64.git" # https://git.code.sf.net/p/mingw-w64/mingw-w64
-BINUTILS_URL="https://github.com/Alex313031/binutils.git"  # https://git.sr.ht/~sourceware/binutils-gdb
-GCC_URL="https://github.com/gcc-mirror/gcc.git"            # https://git.sr.ht/~sourceware/gcc
+MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64" # https://git.code.sf.net/p/mingw-w64/mingw-w64
+BINUTILS_URL="https://github.com/rtems/sourceware-mirror-binutils-gdb" # https://git.sr.ht/~sourceware/binutils-gdb
+GCC_URL="https://github.com/gcc-mirror/gcc" # https://git.sr.ht/~sourceware/gcc
 # What branches to checkout
 MINGW_W64_BRANCH="v14.x"
-BINUTILS_BRANCH="2.46" # binutils-2_46-branch
+BINUTILS_BRANCH="binutils-2_46-branch"
 GCC_BRANCH="releases/gcc-16"
 
 # Controls minimum Windows target, should always be set non-zero later.
@@ -258,6 +258,55 @@ apply_patches() {
     change_dir "$HERE"
 }
 
+# Echo "<branch> <commit>" for the git repo at $1, falling back to the
+# branch label $2 if HEAD is detached or git can't read the repo.
+git_ref() {
+    local dir="$1" fallback="$2" branch commit
+    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+        branch="$fallback"
+    fi
+    commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+    printf '%s %s' "$branch" "$commit"
+}
+
+# Write a VERSION.txt manifest into an arch's install prefix. All values are
+# gathered live: branch/commit from git, config.guess from its timestamp line,
+# the script name/version, and the effective build flags for that arch.
+# $1 = arch, $2 = install prefix, $3 = arch-relevant flag lines (KEY=value\n...)
+write_version_file() {
+    local arch="$1" prefix="$2" flag_lines="$3"
+    local mingw_ref gcc_ref binutils_ref config_guess_ver
+
+    mingw_ref=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
+    gcc_ref=$(git_ref "$SRC_PATH/gcc" "$GCC_BRANCH")
+    binutils_ref=$(git_ref "$SRC_PATH/binutils" "$BINUTILS_BRANCH")
+    config_guess_ver=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
+
+    cat > "$prefix/VERSION.txt" <<EOF
+---- Versions ----
+
+MinGW Version: $mingw_ref
+
+GCC Version: $gcc_ref
+
+Binutils Version: $binutils_ref
+
+config.guess Version: $config_guess_ver
+
+Built using $SCRIPTNAME Version: $SCRIPTVER
+
+---- Build Details ----
+
+Arch: $arch
+
+WIN32_WINNT=$WIN32_WINNT
+IS_DEBUG=$IS_DEBUG
+$flag_lines
+EOF
+    printf "${GRE}Wrote ${prefix}/VERSION.txt${c0}\n"
+}
+
 build() {
     if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
         printf "${YEL}Already applied patches.${c0}\n"
@@ -312,6 +361,7 @@ build() {
       else
         SIMD_FLAGS+=" -mno-mmx"
       fi
+      local VERSION_FLAGS="USE_MMX=$USE_MMX"
     elif [ "$arch" = "i686" ]; then
       # higher SSE levels imply the lower ones; use local copies so we never
       # mutate the global USE_* flags between successive arch builds
@@ -340,6 +390,10 @@ build() {
         SIMD_FLAGS+=" -mssse3 -msse4.2"
         MARCH="--with-arch=nehalem"
       fi
+      local VERSION_FLAGS="USE_SSE2=$sse2
+USE_SSE3=$sse3
+USE_SSE41=$sse41
+USE_SSE42=$sse42"
     elif [ "$arch" = "x86_64" ]; then
       # higher SIMD levels imply the lower ones; use local copies so we never
       # mutate the global USE_* flags between successive arch builds
@@ -381,6 +435,12 @@ build() {
         SIMD_FLAGS+=" -mavx512f -mavx512cd -mavx512vl -mavx512bw -mavx512dq"
         MARCH="--with-arch=x86-64-v4"
       fi
+      local VERSION_FLAGS="USE_SSE3=$sse3
+USE_SSE41=$sse41
+USE_SSE42=$sse42
+USE_AVX=$avx
+USE_AVX2=$avx2
+USE_AVX512=$avx512"
     fi
     local TARGET_CFLAGS="$OPT_FLAGS $SIMD_FLAGS -pipe"
     local TARGET_CXXFLAGS="$TARGET_CFLAGS"
@@ -509,6 +569,8 @@ build() {
         make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing final GCC + libs" "" \
         make install $VFLAGS
+
+    write_version_file "$arch" "$prefix" "$VERSION_FLAGS"
 }
 
 while :; do
