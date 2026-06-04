@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.3"
+SCRIPTVER="2.0.4"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -249,7 +249,7 @@ build() {
     if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
         printf "${YEL}Already applied patches.${c0}\n"
     else
-        apply_patches
+        apply_patches || error_exit "Failed to apply patches"
     fi
     local arch="$1"
     local prefix="$2"
@@ -283,7 +283,7 @@ build() {
     local OPT_FLAGS="$BASE_FLAGS "
     if [ "$IS_DEBUG" = true ]; then
       local OPT_FLAGS+="-Og -g2"
-      local STRIP_FLAG="-rdynamic"
+      local STRIP_FLAG=""
     else
       local OPT_FLAGS+="-O3 -g0"
       local STRIP_FLAG="-s"
@@ -387,7 +387,7 @@ build() {
         local x86_dwarf="--disable-sjlj-exceptions --with-dwarf2"
         local crt_lib="--enable-lib32 --disable-lib64"
     elif [ "$arch" = "x86_64" ]; then
-        local x86_dwarf="--with-dwarf3"
+        local x86_dwarf=""
         local crt_lib="--enable-lib64 --disable-lib32"
     else
       printf "No matching arch!"
@@ -834,11 +834,15 @@ BUILD=$(sh "$SRC_PATH/config.guess")
 
 change_dir "$SRC_PATH/gcc"
 
-execute "" "Failed to download GCC dependencies" \
-    ./contrib/download_prerequisites
+# download_prerequisites fetches gmp/mpfr/mpc/isl into the gcc tree; skip the
+# re-download if they're already present (e.g. on a --cached-sources rebuild)
+if [ ! -e "$SRC_PATH/gcc/gmp" ]; then
+    execute "" "Failed to download GCC dependencies" \
+        ./contrib/download_prerequisites
+fi
 
 for i in mpc isl mpfr gmp; do
-    ln -s "$SRC_PATH/gcc/$i" "$SRC_PATH/binutils/$i"
+    ln -sfn "$SRC_PATH/gcc/$i" "$SRC_PATH/binutils/$i"
 done
 
 ADD_TO_PATH=()
@@ -899,7 +903,7 @@ if [ ! "$KEEP_ARTIFACTS" ]; then
         remove_path "$SRC_PATH"
     fi
     remove_path "$BLD_PATH"
-    remove_path "$LOG_FILE"
+    # keep build.log: it's the record of the build, and --clean preserves it as build.log.old
 fi
 
 printf "${GRE}Done! ${c0}To use MinGW-w64 everywhere add these to your \$PATH:"
