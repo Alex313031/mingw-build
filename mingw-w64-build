@@ -125,9 +125,9 @@ error_exit() {
   shift 1
 
   if [ "$error_msg" ]; then
-      printf "${RED}%s${c0}\n" "$error_msg" >&2
+      log "${RED}%s${c0}\n" "$error_msg" >&2
   else
-      printf "${RED}An error occured.${c0}\n" >&2
+      log "${RED}An error occured.${c0}\n" >&2
   fi
   exit 1
 }
@@ -161,20 +161,39 @@ execute() {
     fi
 }
 
+log() {
+  # Print a message (printf-style: format then args) to the console with color,
+  # and append a color-stripped copy to the log file so build.log stays clean.
+  # Unlike execute(), it runs no command and does no error handling. The log
+  # write is skipped until the log directory exists (e.g. early arg errors).
+  printf "$@"
+  if [ -d "$(dirname "$LOG_FILE")" ]; then
+      printf "$@" | sed -E 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
+  fi
+}
+
 create_dir() {
     local path="$1"
     shift 1
 
+    local MKDIRFLAGS="-p"
+    if [ "$VERBOSE" == "1" ]; then
+      MKDIRFLAGS+=" -v"
+    fi
     execute "" "Unable to create directory '$path'" \
-        mkdir -p "$path"
+        mkdir $MKDIRFLAGS "$path"
 }
 
 remove_path() {
     local path="$1"
     shift 1
 
+    local RMDIRFLAGS="-f -r"
+    if [ "$VERBOSE" == "1" ]; then
+      RMDIRFLAGS+=" -v"
+    fi
     execute "" "Unable to remove path '$path'" \
-        rm -fr "$path"
+        rm $RMDIRFLAGS "$path"
 }
 
 clean_build() {
@@ -183,14 +202,21 @@ clean_build() {
         return
     fi
 
+    local MVFLAGS="-f"
+    local RMFLAGS="-rf"
+    if [ "$VERBOSE" == "1" ]; then
+        MVFLAGS+=" -v"
+        RMFLAGS+=" -v"
+    fi
+
     # keep the previous build log around as build.log.old
     if [ -f "$LOG_FILE" ]; then
-        mv -fv "$LOG_FILE" "$LOG_FILE.old"
+        mv $MVFLAGS "$LOG_FILE" "$LOG_FILE.old"
     fi
 
     # nuke everything else under the build directory, preserving build.log.old
     find "$ROOT_PATH" -mindepth 1 -maxdepth 1 \
-        ! -name "$(basename "$LOG_FILE").old" -exec rm -rf {} +
+        ! -name "$(basename "$LOG_FILE").old" -exec rm $RMFLAGS {} +
 
     printf "${YEL}Cleaned '%s'.${c0}\n" "$ROOT_PATH"
 }
@@ -231,7 +257,7 @@ download_sources() {
 }
 
 apply_patches() {
-    printf "${GRE}Applying patches...${c0}\n"
+    log "${GRE}Applying patches...${c0}\n"
     create_dir "$SRC_PATH/patches"
     execute "" "Unable to copy patches" \
         cp -fv "$HERE"/patches/*.patch "$SRC_PATH/patches/"
@@ -317,7 +343,7 @@ EOF
 build() {
     if [ "$WIN32_WINNT" != "0" ]; then
         export _WIN32_WINNT=$WIN32_WINNT
-        printf "${GRE}Starting build using _WIN32_WINNT ${_WIN32_WINNT} and $JOBS jobs. ${c0}\n"
+        log "${GRE}Starting build using $JOB_COUNT jobs.${c0}\n"
     else
       error_exit "WIN32_WINNT should not be 0!"
     fi
@@ -482,10 +508,11 @@ USE_AVX512=$avx512"
       VFLAGS+=" VERBOSE=1 V=1"
     fi
 
-    printf "${CYA}HOST_CFLAGS    = ${bold}$HOST_CFLAGS ${c0}\n"
-    printf "${CYA}HOST_LDFLAGS   = ${bold}$HOST_LDFLAGS ${c0}\n"
-    printf "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
-    printf "${CYA}TARGET_LDFLAGS = ${bold}$TARGET_LDFLAGS ${c0}\n"
+    log "${CYA}HOST_CFLAGS    = ${bold}$HOST_CFLAGS ${c0}\n"
+    log "${CYA}HOST_LDFLAGS   = ${bold}$HOST_LDFLAGS ${c0}\n"
+    log "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
+    log "${CYA}TARGET_LDFLAGS = ${bold}$TARGET_LDFLAGS ${c0}\n"
+    log "${CYA}_WIN32_WINNT   = ${bold}${_WIN32_WINNT} ${c0}\n"
     sleep 1
 
     create_dir "$bld_path/binutils" &&
@@ -587,7 +614,7 @@ USE_AVX512=$avx512"
         make install $VFLAGS
 
     write_version_file "$arch" "$prefix" "$VERSION_FLAGS"
-    printf "${GRE}Done building for arch $arch\n"
+    log "${GRE}Done building for arch $arch\n"
 }
 
 # Zip an arch's install prefix into <root>/<pkgname>.zip. The 64-bit build is
@@ -998,7 +1025,7 @@ else
         arg_error "No sources found, run with --download sources first."
     fi
     if [ "$CACHED_SOURCES" ]; then
-      printf "${YEL}NOTE: Using cached sources.${c0}\n"
+      log "${YEL}NOTE: Using cached sources.${c0}\n"
     fi
 fi
 
