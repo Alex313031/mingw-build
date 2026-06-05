@@ -1,0 +1,50 @@
+name: Build Windows-hosted toolchains (Ubuntu 22.04)
+
+# Manual trigger only for now -- each arch runs a two-phase Canadian cross
+# (Phase 1 Linux-hosted intermediate + Phase 2 Windows-hosted) and takes a
+# while. To build on pushes, add e.g.:
+#   push:
+#     branches: [ main ]
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    # Built on Ubuntu 22.04 (glibc 2.35), but the deliverable is a Windows-hosted
+    # toolchain (statically linked .exe binaries), so the build host's glibc does
+    # not affect where the toolchain runs -- it runs on Windows.
+    runs-on: ubuntu-22.04
+    # One arch per job, in parallel; don't let one arch's failure cancel the rest.
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [i586, i686, x86_64]
+    # Two from-source toolchains per arch (Phase 1 + Phase 2); still under 6h.
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ./mingw-win-build.sh --deps
+
+      - name: Build ${{ matrix.arch }} and package
+        run: ./mingw-win-build.sh ${{ matrix.arch }} --package
+
+      - name: Upload toolchain zip
+        uses: actions/upload-artifact@v4
+        with:
+          # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
+          name: mingw-win-${{ matrix.arch }}
+          path: build/*.zip
+          if-no-files-found: error
+
+      - name: Upload build log
+        # always grab the log, especially useful when the build fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.arch }}
+          path: build/build.log
+          if-no-files-found: ignore
