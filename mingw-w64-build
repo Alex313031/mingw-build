@@ -481,13 +481,14 @@ USE_AVX512=$avx512"
       VFLAGS+=" VERBOSE=1 V=1"
     fi
 
-    create_dir "$bld_path/binutils" &&
-    change_dir "$bld_path/binutils" &&
-
     printf "${CYA}HOST_CFLAGS    = ${bold}$HOST_CFLAGS ${c0}\n"
     printf "${CYA}HOST_LDFLAGS   = ${bold}$HOST_LDFLAGS ${c0}\n"
     printf "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
     printf "${CYA}TARGET_LDFLAGS = ${bold}$TARGET_LDFLAGS ${c0}\n"
+    sleep 1
+
+    create_dir "$bld_path/binutils" &&
+    change_dir "$bld_path/binutils" &&
 
     execute "($arch): Configuring Binutils" "" \
         "$SRC_PATH/binutils/configure" --prefix="$prefix" --disable-shared \
