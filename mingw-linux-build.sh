@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.0"
+SCRIPTVER="2.1.1"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -356,6 +356,14 @@ download_gcc_deps() {
   done
 }
 
+copy_extra_files() {
+  local arch="$1" prefix="$2"
+  local outpath="$prefix/$arch-w64-mingw32/include"
+  log "${GRE}Copying extra headers to $outpath${c0}\n"
+  execute "" "Failed to copy sdkddkver.h" cp -fv ${HERE}/patches/sdkddkver.h $outpath
+  execute "" "Failed to copy winsdkver.h" cp -fv ${HERE}/patches/winsdkver.h $outpath
+}
+
 build() {
   if [ "$WIN32_WINNT" != "0" ]; then
     export _WIN32_WINNT=$WIN32_WINNT
@@ -507,7 +515,7 @@ USE_AVX512=$avx512"
   # Always use SSE3, since most people using this project will be on capable CPUs
   local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -msse3 -pipe"
   local HOST_CXXFLAGS="$HOST_CFLAGS"
-  local HOST_LDFLAGS="$STRIP_FLAG"
+  local HOST_LDFLAGS="-static-libgcc -static-libstdc++ $STRIP_FLAG"
 
   if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then
     # Causes top level configure warnings: Ignore, they are harmless
@@ -629,6 +637,7 @@ USE_AVX512=$avx512"
   execute "($arch): Installing final GCC + libs" "Installing final GCC failed" \
       make install $VFLAGS
 
+  copy_extra_files "$arch" "$prefix"
   write_version_file "$arch" "$prefix" "$VERSION_FLAGS"
   log "${GRE}Done building for arch $arch\n"
 }
@@ -655,7 +664,6 @@ package_arch() {
         zip -r -q "$pkgname.zip" "$pkgname"
     remove_path "$pkgname"
   fi
-  printf "${GRE}Done.\n"
 }
 
 install_deps() {

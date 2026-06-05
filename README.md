@@ -27,11 +27,11 @@ The x86_64 (x64) build targets Windows Server 2003 by default. It has SSE2 instr
  - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX and AVX2
 
 ## Usage
-`mingw-linux-build.sh` / `mingw-win-build.sh` &lt;arch&gt; __[options]__
+`mingw-linux-build.sh` / `mingw-win-build.sh` __&lt;arch&gt; [options]__
 
 To install prerequisites the script needs to run, use the `--deps` flag.  
 
-Some common options are:
+Some common options are:  
 
 `--all` - Build for all architectures.  
 `--package` - Package the build(s) into .zip files, ready for distribution.  
@@ -41,7 +41,7 @@ Some common options are:
 `--verbose` - Verbose logging output  
 `--jobs` - Adjust number of concurrent build jobs  
 
- - See `--help` for all build options.  
+&nbsp;&ndash;&nbsp;See `--help` for all build options.  
 
 ### Host Platforms
 The scripts should run on Ubuntu, Debian, Cygwin, macOS (with Homebrew), and other __bash__ based shells.
