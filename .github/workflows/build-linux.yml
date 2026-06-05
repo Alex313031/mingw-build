@@ -1,4 +1,4 @@
-name: Build Linux-hosted toolchains (Ubuntu 22.04)
+name: Build Linux toolchains (Ubuntu 22.04)
 
 # Manual trigger only for now -- each arch compiles a from-source GCC toolchain
 # and takes a while. To build on pushes, add e.g.:
@@ -32,14 +32,6 @@ jobs:
       - name: Build ${{ matrix.arch }} and package
         run: ./mingw-linux-build.sh ${{ matrix.arch }} --package
 
-      - name: Upload toolchain zip
-        uses: actions/upload-artifact@v4
-        with:
-          # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
-          name: mingw-linux-${{ matrix.arch }}
-          path: build/*.zip
-          if-no-files-found: error
-
       - name: Upload build log
         # always grab the log, especially useful when the build fails
         if: always()
@@ -48,3 +40,11 @@ jobs:
           name: build-log-${{ matrix.arch }}
           path: build/build.log
           if-no-files-found: ignore
+
+      - name: Upload toolchain zips
+        uses: actions/upload-artifact@v4
+        with:
+          # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
+          name: mingw-linux-${{ matrix.arch }}
+          path: build/*.zip
+          if-no-files-found: error

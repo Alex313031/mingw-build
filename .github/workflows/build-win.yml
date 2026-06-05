@@ -1,4 +1,4 @@
-name: Build Windows-hosted toolchains (Ubuntu 22.04)
+name: Build Windows toolchains
 
 # Manual trigger only for now -- each arch runs a two-phase Canadian cross
 # (Phase 1 Linux-hosted intermediate + Phase 2 Windows-hosted) and takes a
@@ -32,19 +32,19 @@ jobs:
       - name: Build ${{ matrix.arch }} and package
         run: ./mingw-win-build.sh ${{ matrix.arch }} --package
 
-      - name: Upload toolchain zip
-        uses: actions/upload-artifact@v4
-        with:
-          # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
-          name: mingw-win-${{ matrix.arch }}
-          path: build/*.zip
-          if-no-files-found: error
-
       - name: Upload build log
         # always grab the log, especially useful when the build fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ matrix.arch }}
-          path: build/build.log
+          path: build_win/build.log
           if-no-files-found: ignore
+
+      - name: Upload toolchain zips
+        uses: actions/upload-artifact@v4
+        with:
+          # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
+          name: mingw-win-${{ matrix.arch }}
+          path: build_win/*.zip
+          if-no-files-found: error

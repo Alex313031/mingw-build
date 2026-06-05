@@ -51,8 +51,8 @@ It uses `config.guess` in [./assets](./assets/config.guess) to auto-configure fo
 
 ### Default Prefix
 `$PWD/build/i586`, `$PWD/build/i686`, and `$PWD/build/x86_64` are the
-default install locations, but this location can be modified with the `--prefix` option.
-To ensure the new compilers are available system-wide, add the dir` to the `$PATH`.  
+default install locations (*build_win* instead of *build* for mingw-win-build.sh), but this location can be modified with the `--prefix` option.  
+To ensure the new compilers are available system-wide, add the dir` to the `$PATH`.
 It does not need to be "installed", the prefix simply chooses where to put built files: the toolchain is fully portable.
 
 ## License
