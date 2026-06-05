@@ -44,8 +44,10 @@ Some common options are:
 &nbsp;&ndash;&nbsp;See `--help` for all build options.  
 
 ### Host Platforms
-The scripts should run on Ubuntu, Debian, Cygwin, macOS (with Homebrew), and other __bash__ based shells.
-The host tools compile with SSE3 by default: Any reasonably modern OS/Machine should handle it.
+The scripts should run on Ubuntu, Debian, Cygwin, macOS (with Homebrew), and other __bash__ based shells.  
+The host tools compile with SSE3 by default: Any reasonably modern OS/Machine should handle it.  
+
+It uses `config.guess` in [./assets](./assets/config.guess) to auto-configure for your platform.
 
 ### Default Prefix
 `$PWD/build/i586`, `$PWD/build/i686`, and `$PWD/build/x86_64` are the
