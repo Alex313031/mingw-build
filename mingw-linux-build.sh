@@ -252,7 +252,7 @@ download_sources() {
       "$GCC_URL" gcc
 
   execute "Copying config.guess..." "" \
-      cp -fv ${HERE}/config.guess ./
+      cp -fv ${HERE}/assets/config.guess ./
   printf "${GRE}Done downloading sources!${c0}\n"
 }
 
