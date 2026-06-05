@@ -230,7 +230,6 @@ change_dir() {
 }
 
 download_sources() {
-  printf "${YEL}Deleting previous source path ${bold}$SRC_PATH${c0}...\n"
   remove_path "$SRC_PATH"
   create_dir "$SRC_PATH"
   change_dir "$SRC_PATH"
@@ -362,6 +361,8 @@ copy_extra_files() {
   log "${GRE}Copying extra headers to $outpath${c0}\n"
   execute "" "Failed to copy sdkddkver.h" cp -fv ${HERE}/patches/sdkddkver.h $outpath
   execute "" "Failed to copy winsdkver.h" cp -fv ${HERE}/patches/winsdkver.h $outpath
+  log "${GRE}Copying logo SVG to $prefix${c0}\n"
+  execute "" "Failed to copy mingw.svg" cp -fv ${HERE}/assets/mingw-w64.svg $prefix/mingw.svg
 }
 
 # Build an <arch>-w64-mingw32 toolchain into $2.
@@ -376,7 +377,6 @@ copy_extra_files() {
 build_toolchain() {
   if [ "$WIN32_WINNT" != "0" ]; then
     export _WIN32_WINNT=$WIN32_WINNT
-    log "${GRE}Starting build using $JOB_COUNT jobs.${c0}\n"
   else
     error_exit "WIN32_WINNT should not be 0!"
   fi
@@ -386,6 +386,8 @@ build_toolchain() {
   else
     apply_patches || error_exit "Failed to apply patches"
   fi
+
+  log "${GRE}Starting build using $JOB_COUNT jobs.${c0}\n"
 
   local arch="$1"
   local prefix="$2"
