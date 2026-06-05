@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.7"
+SCRIPTVER="2.0.8"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -80,6 +80,7 @@ Options:
   -v, --verbose                Log build output to the console as well as the build.log file.
   -a, --all                    Build all three archs: i586, i686 and x86_64.
   -c, --clean                  Remove the build directory, then exit (keeps the previous build.log as build.log.old).
+  -d, --deps                   Install prerequisites for using this script (Ubuntu/Debian only).
   --package                    After a successful build, zip each built arch into <root>/<arch>.zip (x86_64 becomes x64.zip).
   -j <count>, --jobs <count>   Override make job count. (default: $JOB_COUNT)
   -p <path>, --prefix <path>   Change install location. (default: $ROOT_PATH/<arch>)
@@ -612,6 +613,24 @@ package_arch() {
     printf "${GRE}Done.\n"
 }
 
+install_deps() {
+  if ! command -v apt-get >/dev/null; then
+      error_exit "--deps only supports apt-based systems (Ubuntu/Debian); install the prerequisites manually"
+  fi
+  # use sudo only when not already root (e.g. plain CI containers lack sudo)
+  local sudo=""
+  [ "$(id -u)" -ne 0 ] && sudo="sudo"
+
+  printf "${GRE}Installing dependencies for $SCRIPTNAME...${c0}\n"
+  # build-essential: gcc, g++, make. The rest provide the remaining tools the
+  # missing-executable check requires, plus zip for --package.
+  $sudo apt-get update || error_exit "apt-get update failed"
+  $sudo apt-get install -y \
+      build-essential flex bison texinfo m4 bzip2 git curl zip autoconf diffutils \
+      || error_exit "Failed to install dependencies"
+  printf "${GRE}Done installing dependencies!${c0}\n"
+}
+
 while :; do
     case $1 in
         -h|--help)
@@ -620,6 +639,10 @@ while :; do
             ;;
         --version)
             show_version
+            exit 0
+            ;;
+        -d|--deps)
+            install_deps
             exit 0
             ;;
         -v|--verbose)
