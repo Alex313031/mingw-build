@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.0.8"
+SCRIPTVER="2.0.9"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -61,7 +61,7 @@ CYA='\033[1;96m'
 RED='\033[1;31m'
 GRE='\033[1;32m'
 c0='\033[0;00m'
-bold='\033[1;00m'
+bold='\033[1;37m'
 underline='\033[4m'
 
 show_help() {
@@ -75,40 +75,40 @@ Archs:
   x86_64 | x64 - Windows 64-bit for CPUs with SSE2 (Intel Prescott, AMD K8 and newer)
 
 Options:
-  -h, --help                   Show this help.
-  --version                    Show script version.
-  -v, --verbose                Log build output to the console as well as the build.log file.
-  -a, --all                    Build all three archs: i586, i686 and x86_64.
-  -c, --clean                  Remove the build directory, then exit (keeps the previous build.log as build.log.old).
-  -d, --deps                   Install prerequisites for using this script (Ubuntu/Debian only).
-  --package                    After a successful build, zip each built arch into <root>/<arch>.zip (x86_64 becomes x64.zip).
-  -j <count>, --jobs <count>   Override make job count. (default: $JOB_COUNT)
-  -p <path>, --prefix <path>   Change install location. (default: $ROOT_PATH/<arch>)
-  -r <path>, --root <path>     Location for sources, build artifacts and the resulting compiler. (default: $ROOT_PATH)
-  --keep-artifacts             Don't remove source and build files after a successful build.
-  --disable-threads            Disable pthreads and STL <thread>.
-  --download-sources           Only download sources, then exit; for making local modifications.
-  --patch                      Only apply patches to already-downloaded sources, then exit; needs no arch.
-  --cached-sources             Use existing sources instead of downloading new ones and patching them.
-  --binutils-url <url>         Set Binutils URL, (default: $BINUTILS_URL)
-  --binutils-branch <branch>   Set Binutils branch, (default: $BINUTILS_BRANCH)
-  --gcc-url <url>              Set GCC URL, (default: $GCC_URL)
-  --gcc-branch <branch>        Set GCC branch, (default: $GCC_BRANCH)
-  --mingw-url <url>            Set MinGW-w64 url, (default: $MINGW_W64_URL)
-  --mingw-branch <branch>      Set MinGW-w64 branch, (default: $MINGW_W64_BRANCH)
-  --crtlib <runtime>           Set MinGW Linked CRT (crtdll, msvcrt, ucrt); should usually be left alone. (default: $LINKED_RUNTIME)
-  --win32-winnt <version>      Set default _WIN32_WINNT value for minimum Windows version target. (default: $WIN32_WINNT)
+  -h, --help                  Show this help.
+  -v, --verbose               Log build output to the console as well as the build.log file.
+  -a, --all                   Build all three archs: i586, i686 and x86_64.
+  --version                   Show script version.
+  --deps                      Install prerequisites for using this script (Ubuntu/Debian only).
+  -j <count>, --jobs <count>  Override make job count. (default: $JOB_COUNT)
+  --package                   After a successful build, zip each built arch into <root>/<arch>.zip (x86_64 becomes x64.zip).
+  --prefix <path>             Change install location. (default: $ROOT_PATH/<arch>)
+  --root <path>               Location for sources, build artifacts and the resulting compiler. (default: $ROOT_PATH)
+  --keep-artifacts            Don't remove source and build files after a successful build.
+  --disable-threads           Disable pthreads and STL <thread>.
+  -c, --cached-sources        Use existing sources instead of downloading new ones and patching them.
+  -d, --download-sources      Only download sources, then exit; for making local modifications.
+  -p, --patch                 Only apply patches to already-downloaded sources, then exit; needs no arch.
+  --clean                     Removes all sources and build artifacts, and output (keeps the previous build.log as build.log.old).
+  --binutils-url <url>        Set Binutils source URL, (default: $BINUTILS_URL)
+  --binutils-branch <branch>  Set Binutils branch, (default: $BINUTILS_BRANCH)
+  --gcc-url <url>             Set GCC source URL, (default: $GCC_URL)
+  --gcc-branch <branch>       Set GCC branch, (default: $GCC_BRANCH)
+  --mingw-url <url>           Set MinGW-w64 source url, (default: $MINGW_W64_URL)
+  --mingw-branch <branch>     Set MinGW-w64 branch, (default: $MINGW_W64_BRANCH)
+  --crtlib <runtime>          Set MinGW Linked CRT (crtdll, msvcrt, ucrt); should usually be left alone. (default: $LINKED_RUNTIME)
+  --win32-winnt <version>     Set default _WIN32_WINNT value for minimum Windows version target. (default: $WIN32_WINNT)
 
 Compilation Flags:
-  --debug                      Create a debug build (default is release mode).
-  --mmx                        Compile with MMX, only has an effect on i586 builds. (default: $USE_MMX)
-  --sse2                       Compile with SSE2, only has an effect on i686 builds. (default: $USE_SSE2)
-  --sse3                       Compile with SSE3, i686 & x86_64 (default: $USE_SSE3)
-  --sse41                      Compile with SSE4.1, i686 & x86_64 (default: $USE_SSE41)
-  --sse42                      Compile with SSE4.2, i686 & x86_64 (default: $USE_SSE42)
-  --avx                        Compile with AVX, x86_64 only. (default: $USE_AVX)
-  --avx2                       Compile with AVX2, x86_64 only. (default: $USE_AVX2)
-  --avx512                     Compile with AVX-512, x86_64 only, experimental. (default: $USE_AVX512)
+  --debug                     Create a debug build (default is release mode).
+  --mmx                       Compile with MMX, only has an effect on i586 builds. (default: $USE_MMX)
+  --sse2                      Compile with SSE2, only has an effect on i686 builds. (default: $USE_SSE2)
+  --sse3                      Compile with SSE3, i686 & x86_64 (default: $USE_SSE3)
+  --sse41                     Compile with SSE4.1, i686 & x86_64 (default: $USE_SSE41)
+  --sse42                     Compile with SSE4.2, i686 & x86_64 (default: $USE_SSE42)
+  --avx                       Compile with AVX, x86_64 only. (default: $USE_AVX)
+  --avx2                      Compile with AVX2, x86_64 only. (default: $USE_AVX2)
+  --avx512                    Compile with AVX-512, x86_64 only, experimental. (default: $USE_AVX512)
 
 For possible _WIN32_WINNT values, see:
 https://learn.microsoft.com/en-us/cpp/porting/modifying-winver-and-win32-winnt
@@ -204,6 +204,7 @@ change_dir() {
 }
 
 download_sources() {
+    printf "${YEL}Deleting previous source path ${bold}$SRC_PATH${c0}...\n"
     remove_path "$SRC_PATH"
     create_dir "$SRC_PATH"
     change_dir "$SRC_PATH"
@@ -212,15 +213,15 @@ download_sources() {
     local git_progress=""
     [ "$VERBOSE" == "1" ] && git_progress="--progress"
     printf "${GRE}Downloading sources${c0}\n"
-    execute "Downloading MinGW source..." "Unable to clone MinGW-w64, to use the official mirror: --mingw-url 'https://git.code.sf.net/p/mingw-w64/mingw-w64'" \
+    execute "Cloning MinGW source..." "Unable to clone MinGW-w64, to use the official mirror: --mingw-url 'https://git.code.sf.net/p/mingw-w64/mingw-w64'" \
         git clone $git_progress --depth 1 -b "$MINGW_W64_BRANCH" \
             "$MINGW_W64_URL" mingw-w64
 
-    execute "Downloading Binutils source..." "Unable to clone Binutils, to use the official mirror: --binutils-url 'https://git.sr.ht/~sourceware/binutils-gdb'" \
+    execute "Cloning Binutils source..." "Unable to clone Binutils, to use the official mirror: --binutils-url 'https://git.sr.ht/~sourceware/binutils-gdb'" \
         git clone $git_progress --depth 1 -b "$BINUTILS_BRANCH" \
             "$BINUTILS_URL" binutils
 
-    execute "Downloading GCC source..." "Unable to clone GCC, to use the official mirror: --gcc-url 'https://git.sr.ht/~sourceware/gcc'" \
+    execute "Cloning GCC source..." "Unable to clone GCC, to use the official mirror: --gcc-url 'https://git.sr.ht/~sourceware/gcc'" \
         git clone $git_progress --depth 1 -b "$GCC_BRANCH" \
             "$GCC_URL" gcc
 
@@ -316,7 +317,7 @@ EOF
 build() {
     if [ "$WIN32_WINNT" != "0" ]; then
         export _WIN32_WINNT=$WIN32_WINNT
-        printf "${GRE}Starting build using _WIN32_WINNT ${_WIN32_WINNT} ${c0}\n"
+        printf "${GRE}Starting build using _WIN32_WINNT ${_WIN32_WINNT} and $JOBS jobs. ${c0}\n"
     else
       error_exit "WIN32_WINNT should not be 0!"
     fi
@@ -642,7 +643,7 @@ while :; do
             show_version
             exit 0
             ;;
-        -d|--deps)
+        --deps)
             install_deps
             exit 0
             ;;
@@ -660,7 +661,7 @@ while :; do
                 arg_error "'--jobs' requires a non-empty option argument"
             fi
             ;;
-        -p|--prefix)
+        --prefix)
             if [ "$2" ]; then
                 PREFIX="$2"
                 shift
@@ -674,7 +675,7 @@ while :; do
         --prefix=)
             arg_error "'--prefix' requires a non-empty option argument"
             ;;
-        -r|--root)
+        --root)
             if [ "$2" ]; then
                 ROOT_PATH_ARG="$2"
                 shift
@@ -691,19 +692,19 @@ while :; do
         --keep-artifacts)
             KEEP_ARTIFACTS=1
             ;;
-        -c|--clean)
+        --clean)
             CLEAN=1
             ;;
-        --patch)
+        -p|--patch)
             PATCHES_ONLY=1
             ;;
         --disable-threads)
             ENABLE_THREADS=""
             ;;
-        --cached-sources)
+        -c|--cached-sources)
             CACHED_SOURCES=1
             ;;
-        --download-sources)
+        -d|--download-sources)
             JUST_SOURCES=1
             ;;
         --binutils-url)
@@ -822,24 +823,12 @@ while :; do
             ;;
         i586)
             BUILD_I586=1
-            if [ ! "$GOT_WIN32_WINNT" ]; then
-                WIN32_WINNT="0x0400"
-                GOT_WIN32_WINNT=1
-            fi
             ;;
         i686|x32)
             BUILD_I686=1
-            if [ ! "$GOT_WIN32_WINNT" ]; then
-               WIN32_WINNT="0x0500"
-               GOT_WIN32_WINNT=1
-            fi
             ;;
         x86_64|x64)
             BUILD_X86_64=1
-            if [ ! "$GOT_WIN32_WINNT" ]; then
-                WIN32_WINNT="0x0502"
-                GOT_WIN32_WINNT=1
-            fi
             ;;
         -a|--all)
             # build every arch; each picks its own _WIN32_WINNT default at
@@ -957,8 +946,6 @@ TOTAL_STEPS=0
 
 if [ ! "$CACHED_SOURCES" ]; then
     TOTAL_STEPS=$((TOTAL_STEPS + 4))
-else
-  printf "${YEL}NOTE: Using cached sources${c0}\n"
 fi
 
 if [ "$ENABLE_THREADS" ]; then
@@ -1009,6 +996,9 @@ if [ ! "$CACHED_SOURCES" ] || [ "$JUST_SOURCES" ]; then
 else
     if [ ! -f "$SRC_PATH/config.guess" ]; then
         arg_error "No sources found, run with --download sources first."
+    fi
+    if [ "$CACHED_SOURCES" ]; then
+      printf "${YEL}NOTE: Using cached sources.${c0}\n"
     fi
 fi
 
