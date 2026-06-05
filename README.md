@@ -27,7 +27,7 @@ The x86_64 (x64) build targets Windows Server 2003 by default. It has SSE2 instr
  - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX and AVX2
 
 ## Usage
-`mingw-linux-build.sh` / `mingw-win-build.sh` <arch> [options]
+`mingw-linux-build.sh` / `mingw-win-build.sh` &lt;arch&gt; __[options]__
 
 To install prerequisites the script needs to run, use the `--deps` flag.  
 
