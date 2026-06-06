@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.2"
+SCRIPTVER="2.1.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build_win"
@@ -56,18 +56,18 @@ USE_AVX2=false
 USE_AVX512=false
 
 # Colors
-YEL='\033[1;33m'
-CYA='\033[1;96m'
-RED='\033[1;31m'
-GRE='\033[1;32m'
-c0='\033[0;00m'
-bold='\033[1;37m'
-underline='\033[4m'
+YEL='\033[1;33m' # Yellow
+CYA='\033[1;96m' # Cyan
+RED='\033[1;31m' # Red
+GRE='\033[1;32m' # Green
+c0='\033[0;00m'  # Reset Text
+bold='\033[1;37m' # Bold Text
+underline='\033[4m' # Underline Text
 
 show_help() {
   cat <<EOF
 Usage:
-  $SCRIPTNAME [options] <arch> ...
+  $SCRIPTNAME <arch> [options]
 
 Archs:
   i586         - Windows 32-bit for old CPUs without SSE (Intel Pentium (MMX), Pentium II, AMD K5, K6, K7)
@@ -117,7 +117,8 @@ EOF
 }
 
 show_version() {
-  printf "\n $SCRIPTNAME Version $SCRIPTVER \n"
+  printf "\n %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
+  exit 0
 }
 
 error_exit() {
@@ -759,7 +760,6 @@ while :; do
         ;;
     --version)
         show_version
-        exit 0
         ;;
     --deps)
         install_deps
