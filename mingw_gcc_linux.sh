@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.3"
+SCRIPTVER="2.1.4"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build"
@@ -90,6 +90,7 @@ Options:
   -d, --download-sources      Only download sources, then exit; for making local modifications.
   -p, --patch                 Only apply patches to already-downloaded sources, then exit; needs no arch.
   --clean                     Removes all sources and build artifacts, and output (keeps the previous build.log as build.log.old).
+  --keep-src                  Like --clean but keeps the src/ tree (downloaded + patched sources), so a later build with -c skips re-downloading and re-patching.
   --binutils-url <url>        Set Binutils source URL, (default: $BINUTILS_URL)
   --binutils-branch <branch>  Set Binutils branch, (default: $BINUTILS_BRANCH)
   --gcc-url <url>             Set GCC source URL, (default: $GCC_URL)
@@ -198,6 +199,7 @@ remove_path() {
 }
 
 clean_build() {
+  local keep_src="$1"
   if [ ! -d "$ROOT_PATH" ]; then
     printf "${YEL}Nothing to clean: '%s' does not exist.${c0}\n" "$ROOT_PATH"
     return
@@ -215,11 +217,21 @@ clean_build() {
     mv $MVFLAGS "$LOG_FILE" "$LOG_FILE.old"
   fi
 
-  # nuke everything else under the build directory, preserving build.log.old
+  # nuke everything else under the build directory, preserving build.log.old.
+  # With --keep-src also preserve the downloaded+patched src tree so a later
+  # build can reuse it via -c instead of re-cloning and re-patching.
+  local keep_args=( ! -name "$(basename "$LOG_FILE").old" )
+  if [ "$keep_src" ]; then
+    keep_args+=( ! -name "$(basename "$SRC_PATH")" )
+  fi
   find "$ROOT_PATH" -mindepth 1 -maxdepth 1 \
-      ! -name "$(basename "$LOG_FILE").old" -exec rm $RMFLAGS {} +
+      "${keep_args[@]}" -exec rm $RMFLAGS {} +
 
-  printf "${YEL}Cleaned '%s'.${c0}\n" "$ROOT_PATH"
+  if [ "$keep_src" ]; then
+    printf "${YEL}Cleaned '%s' (kept %s/).${c0}\n" "$ROOT_PATH" "$(basename "$SRC_PATH")"
+  else
+    printf "${YEL}Cleaned '%s'.${c0}\n" "$ROOT_PATH"
+  fi
 }
 
 change_dir() {
@@ -260,7 +272,7 @@ apply_patches() {
   log "${GRE}Applying patches...${c0}\n"
   create_dir "$SRC_PATH/patches"
   execute "" "Unable to copy patches" \
-      cp -fv "$HERE"/patches/*.patch "$SRC_PATH/patches/"
+      cp -fv "$HERE"/patches/*/*.patch "$SRC_PATH/patches/"
   printf "${YEL}  Patching binutils...${c0}\n"
   change_dir "$SRC_PATH/binutils"
   execute "" "Failed to apply binutils-dlltool-zero-ordinals.patch" \
@@ -360,8 +372,8 @@ copy_extra_files() {
   local arch="$1" prefix="$2"
   local outpath="$prefix/$arch-w64-mingw32/include"
   log "${GRE}Copying extra headers to $outpath${c0}\n"
-  execute "" "Failed to copy sdkddkver.h" cp -fv ${HERE}/patches/sdkddkver.h $outpath
-  execute "" "Failed to copy winsdkver.h" cp -fv ${HERE}/patches/winsdkver.h $outpath
+  execute "" "Failed to copy sdkddkver.h" cp -fv ${HERE}/patches/mingw/sdkddkver.h $outpath
+  execute "" "Failed to copy winsdkver.h" cp -fv ${HERE}/patches/mingw/winsdkver.h $outpath
   log "${GRE}Copying logo SVG to $prefix${c0}\n"
   execute "" "Failed to copy mingw.svg" cp -fv ${HERE}/assets/mingw-w64.svg $prefix/mingw.svg
 }
@@ -748,6 +760,9 @@ while :; do
     --clean)
         CLEAN=1
         ;;
+    --keep-src)
+        KEEP_SRC=1
+        ;;
     -p|--patch)
         PATCHES_ONLY=1
         ;;
@@ -935,7 +950,7 @@ while :; do
 done
 
 if [ "$ROOT_PATH_ARG" ]; then
-  if [ "$CLEAN" ] && [ ! -d "$ROOT_PATH_ARG" ]; then
+  if { [ "$CLEAN" ] || [ "$KEEP_SRC" ]; } && [ ! -d "$ROOT_PATH_ARG" ]; then
     # don't create the directory just to clean it
     ROOT_PATH="$ROOT_PATH_ARG"
   else
@@ -947,9 +962,10 @@ if [ "$ROOT_PATH_ARG" ]; then
   LOG_FILE="$ROOT_PATH/build.log"
 fi
 
-# --clean is a standalone command: wipe the build dir and exit, no arch needed
-if [ "$CLEAN" ]; then
-  clean_build
+# --clean / --keep-src are standalone commands: wipe the build dir and exit, no
+# arch needed. --keep-src preserves the src/ tree for a fast cached rebuild (-c).
+if [ "$CLEAN" ] || [ "$KEEP_SRC" ]; then
+  clean_build "$KEEP_SRC"
   exit 0
 fi
 

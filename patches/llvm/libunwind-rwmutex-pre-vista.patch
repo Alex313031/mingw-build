@@ -1,0 +1,41 @@
+diff --git a/libunwind/src/RWMutex.hpp b/libunwind/src/RWMutex.hpp
+index 344d35641..f3422e482 100644
+--- a/libunwind/src/RWMutex.hpp
++++ b/libunwind/src/RWMutex.hpp
+@@ -36,6 +36,28 @@ public:
+ 
+ #elif defined(_WIN32)
+ 
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++// SRWLOCK and its Acquire/Release helpers require Windows Vista (_WIN32_WINNT >=
++// 0x0600). For older targets (NT 4.0/2000/XP) fall back to a CRITICAL_SECTION,
++// available on all NT versions. It does not distinguish shared from exclusive
++// access, so readers are serialized too - correct (just less concurrent), and
++// libunwind takes this lock only rarely (dynamic FDE registration).
++class _LIBUNWIND_HIDDEN RWMutex {
++public:
++  RWMutex() { InitializeCriticalSection(&_lock); }
++  ~RWMutex() { DeleteCriticalSection(&_lock); }
++  RWMutex(const RWMutex &) = delete;
++  RWMutex &operator=(const RWMutex &) = delete;
++
++  bool lock_shared() { EnterCriticalSection(&_lock); return true; }
++  bool unlock_shared() { LeaveCriticalSection(&_lock); return true; }
++  bool lock() { EnterCriticalSection(&_lock); return true; }
++  bool unlock() { LeaveCriticalSection(&_lock); return true; }
++
++private:
++  CRITICAL_SECTION _lock;
++};
++#else
+ class _LIBUNWIND_HIDDEN RWMutex {
+ public:
+   bool lock_shared() {
+@@ -58,6 +80,7 @@ public:
+ private:
+   SRWLOCK _lock = SRWLOCK_INIT;
+ };
++#endif
+ 
+ #elif !defined(LIBUNWIND_USE_WEAK_PTHREAD)
+ 

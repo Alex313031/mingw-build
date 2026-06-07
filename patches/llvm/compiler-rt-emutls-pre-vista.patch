@@ -1,0 +1,27 @@
+diff --git a/compiler-rt/lib/builtins/emutls.c b/compiler-rt/lib/builtins/emutls.c
+index 390ffb25f..76f169f9f 100644
+--- a/compiler-rt/lib/builtins/emutls.c
++++ b/compiler-rt/lib/builtins/emutls.c
+@@ -205,8 +205,22 @@ static BOOL CALLBACK emutls_init(PINIT_ONCE p0, PVOID p1, PVOID *p2) {
+ }
+ 
+ static __inline void emutls_init_once(void) {
++#if defined(_WIN32_WINNT) && (_WIN32_WINNT >= 0x0600)
+   static INIT_ONCE once;
+   InitOnceExecuteOnce(&once, emutls_init, NULL, NULL);
++#else
++  // InitOnceExecuteOnce() requires Windows Vista (_WIN32_WINNT >= 0x0600).
++  // For older targets (NT 4.0/2000/XP) emulate one-time init with an
++  // interlocked state machine: 0 = uninitialized, 1 = in progress, 2 = done.
++  static volatile LONG emutls_once_state = 0;
++  if (InterlockedCompareExchange(&emutls_once_state, 1, 0) == 0) {
++    emutls_init(NULL, NULL, NULL);
++    InterlockedExchange(&emutls_once_state, 2);
++  } else {
++    while (InterlockedCompareExchange(&emutls_once_state, 2, 2) != 2)
++      Sleep(0);
++  }
++#endif
+ }
+ 
+ static __inline void emutls_lock(void) { EnterCriticalSection(emutls_mutex); }

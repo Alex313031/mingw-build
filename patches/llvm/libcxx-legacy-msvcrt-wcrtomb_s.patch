@@ -1,0 +1,52 @@
+diff --git a/libcxx/src/support/win32/support.cpp b/libcxx/src/support/win32/support.cpp
+index 7ac508301..ba80ac304 100644
+--- a/libcxx/src/support/win32/support.cpp
++++ b/libcxx/src/support/win32/support.cpp
+@@ -6,12 +6,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
+-#include <cstdarg> // va_start, va_end
+-#include <cstddef> // size_t
+-#include <cstdio>  // vsprintf, vsnprintf
+-#include <cstdlib> // malloc
+-#include <cstring> // strcpy, wcsncpy
+-#include <cwchar>  // mbstate_t
++#include <algorithm> // min (legacy msvcrt wcrtomb_s shim)
++#include <cerrno>    // errno (legacy msvcrt wcrtomb_s shim)
++#include <cstdarg>   // va_start, va_end
++#include <cstddef>   // size_t
++#include <cstdio>    // vsprintf, vsnprintf
++#include <cstdlib>   // malloc
++#include <cstring>   // strcpy, wcsncpy
++#include <cwchar>    // mbstate_t
+ 
+ // Returns >= 0: the number of wide characters found in the
+ // multi byte sequence src (of src_size_bytes), that fit in the buffer dst
+@@ -101,6 +103,26 @@ size_t wcsnrtombs(char* __restrict dst,
+   if (!dst)
+     dest_remaining = static_cast<size_t>(-1);
+ 
++  // The bounds-checked wcrtomb_s() is only available on msvcr80+/UCRT; the
++  // legacy msvcrt.dll (NT 4.0/2000/XP target) lacks it. Provide a local shim
++  // built on the always-available wcrtomb(). The name shadows the CRT one, so
++  // the call sites below need no changes.
++#if defined(__MINGW32__) && !defined(_UCRT) && (!defined(__MSVCRT_VERSION__) || __MSVCRT_VERSION__ < 0x0800)
++  auto wcrtomb_s = [](size_t* __restrict pReturnValue,
++                      char* __restrict mbchar,
++                      size_t sizeOfmbchar,
++                      wchar_t wchar,
++                      mbstate_t* __restrict mbstate) -> errno_t {
++    char out[MB_CUR_MAX];
++    *pReturnValue = wcrtomb(out, wchar, mbstate);
++    if (*pReturnValue == static_cast<size_t>(-1))
++      return errno;
++    if (mbchar)
++      memcpy(mbchar, out, std::min(sizeOfmbchar, *pReturnValue));
++    return 0;
++  };
++#endif
++
+   while (source_converted != max_source_chars) {
+     if (!dest_remaining)
+       break;

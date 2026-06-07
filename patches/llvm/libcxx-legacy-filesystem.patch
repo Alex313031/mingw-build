@@ -1,0 +1,150 @@
+diff --git a/libcxx/src/filesystem/posix_compat.h b/libcxx/src/filesystem/posix_compat.h
+index ddd99d8aa..65a2e6b15 100644
+--- a/libcxx/src/filesystem/posix_compat.h
++++ b/libcxx/src/filesystem/posix_compat.h
+@@ -146,6 +146,44 @@ private:
+   HANDLE h;
+ };
+ 
++// The FILE_*_INFO structs and GetFileInformationByHandleEx() require Windows
++// Vista (_WIN32_WINNT >= 0x0600). On older targets (NT 4.0/2000/XP) fall back to
++// GetFileInformationByHandle() + BY_HANDLE_FILE_INFORMATION (available since
++// NT4) and read reparse data via DeviceIoControl().
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++inline int stat_handle(HANDLE h, StatT* buf) {
++  BY_HANDLE_FILE_INFORMATION basic;
++  if (!GetFileInformationByHandle(h, &basic))
++    return -1;
++  memset(buf, 0, sizeof(*buf));
++  buf->st_mtim = filetime_to_timespec(basic.ftLastWriteTime);
++  buf->st_atim = filetime_to_timespec(basic.ftLastAccessTime);
++  buf->st_mode = 0555; // Read-only
++  if (!(basic.dwFileAttributes & FILE_ATTRIBUTE_READONLY))
++    buf->st_mode |= 0222; // Write
++  if (basic.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
++    buf->st_mode |= _S_IFDIR;
++  } else {
++    buf->st_mode |= _S_IFREG;
++  }
++  if (basic.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
++    LIBCPP_REPARSE_DATA_BUFFER tag;
++    if (!DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0, &tag, sizeof(tag), nullptr, nullptr))
++      return -1;
++    if (tag.ReparseTag == IO_REPARSE_TAG_SYMLINK)
++      buf->st_mode = (buf->st_mode & ~_S_IFMT) | _S_IFLNK;
++  }
++  buf->st_nlink = basic.nNumberOfLinks;
++  LARGE_INTEGER st_size;
++  st_size.LowPart  = basic.nFileSizeLow;
++  st_size.HighPart = basic.nFileSizeHigh;
++  buf->st_size     = st_size.QuadPart;
++  buf->st_dev      = basic.dwVolumeSerialNumber;
++  memcpy(&buf->st_ino.id[0], &basic.nFileIndexHigh, 4);
++  memcpy(&buf->st_ino.id[4], &basic.nFileIndexLow, 4);
++  return 0;
++}
++#else
+ inline int stat_handle(HANDLE h, StatT* buf) {
+   FILE_BASIC_INFO basic;
+   if (!GetFileInformationByHandleEx(h, FileBasicInfo, &basic, sizeof(basic)))
+@@ -181,6 +219,7 @@ inline int stat_handle(HANDLE h, StatT* buf) {
+   memcpy(&buf->st_ino.id[4], &info.nFileIndexLow, 4);
+   return 0;
+ }
++#endif
+ 
+ inline int stat_file(const wchar_t* path, StatT* buf, DWORD flags) {
+   WinHandle h(path, FILE_READ_ATTRIBUTES, flags);
+@@ -207,6 +246,15 @@ inline int mkdir(const wchar_t* path, int permissions) {
+ }
+ 
+ inline int symlink_file_dir(const wchar_t* oldname, const wchar_t* newname, bool is_dir) {
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++  // CreateSymbolicLinkW() and the SYMBOLIC_LINK_FLAG_* constants require Windows
++  // Vista; symlinks are unsupported on NT 4.0/2000/XP.
++  (void)oldname;
++  (void)newname;
++  (void)is_dir;
++  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
++  return -1;
++#else
+   path dest(oldname);
+   dest.make_preferred();
+   oldname     = dest.c_str();
+@@ -219,6 +267,7 @@ inline int symlink_file_dir(const wchar_t* oldname, const wchar_t* newname, bool
+   if (CreateSymbolicLinkW(newname, oldname, flags))
+     return 0;
+   return -1;
++#endif
+ }
+ 
+ inline int symlink_file(const wchar_t* oldname, const wchar_t* newname) {
+@@ -236,6 +285,14 @@ inline int link(const wchar_t* oldname, const wchar_t* newname) {
+ }
+ 
+ inline int remove(const wchar_t* path) {
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++  // FILE_DISPOSITION_INFO / SetFileInformationByHandle() require Windows Vista.
++  // DeleteFileW() (NT4+) cannot remove a directory, but directory removal goes
++  // through RemoveDirectoryW elsewhere, so this matches POSIX remove() for files.
++  if (!DeleteFileW(path))
++    return -1;
++  return 0;
++#else
+   detail::WinHandle h(path, DELETE, FILE_FLAG_OPEN_REPARSE_POINT);
+   if (!h)
+     return -1;
+@@ -244,6 +301,7 @@ inline int remove(const wchar_t* path) {
+   if (!SetFileInformationByHandle(h, FileDispositionInfo, &info, sizeof(info)))
+     return -1;
+   return 0;
++#endif
+ }
+ 
+ inline int truncate_handle(HANDLE h, off_t length) {
+@@ -332,6 +390,14 @@ inline wchar_t* getcwd([[maybe_unused]] wchar_t* in_buf, [[maybe_unused]] size_t
+ }
+ 
+ inline wchar_t* realpath(const wchar_t* path, [[maybe_unused]] wchar_t* resolved_name) {
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++  // GetFinalPathNameByHandleW() requires Windows Vista; there is no equivalent
++  // on NT 4.0/2000/XP, so path canonicalization is unsupported there.
++  (void)path;
++  (void)resolved_name;
++  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
++  return nullptr;
++#else
+   // Only expected to be used with us allocating the buffer.
+   _LIBCPP_ASSERT_INTERNAL(resolved_name == nullptr, "Windows realpath() assumes a null resolved_name");
+ 
+@@ -360,6 +426,7 @@ inline wchar_t* realpath(const wchar_t* path, [[maybe_unused]] wchar_t* resolved
+     }
+   }
+   return buff.release();
++#endif
+ }
+ 
+ #  define AT_FDCWD -1
+@@ -367,6 +434,14 @@ inline wchar_t* realpath(const wchar_t* path, [[maybe_unused]] wchar_t* resolved
+ using ModeT = int;
+ 
+ inline int fchmod_handle(HANDLE h, int perms) {
++#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0600)
++  // Changing attributes from a HANDLE needs FILE_BASIC_INFO /
++  // SetFileInformationByHandle() (Vista+). Unsupported on NT 4.0/2000/XP.
++  (void)h;
++  (void)perms;
++  SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
++  return -1;
++#else
+   FILE_BASIC_INFO basic;
+   if (!GetFileInformationByHandleEx(h, FileBasicInfo, &basic, sizeof(basic)))
+     return -1;
+@@ -377,6 +452,7 @@ inline int fchmod_handle(HANDLE h, int perms) {
+   if (basic.FileAttributes != orig_attributes && !SetFileInformationByHandle(h, FileBasicInfo, &basic, sizeof(basic)))
+     return -1;
+   return 0;
++#endif
+ }
+ 
+ inline int fchmodat(int /*fd*/, const wchar_t* path, int perms, int flag) {
