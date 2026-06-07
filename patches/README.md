@@ -8,7 +8,7 @@ Windows NT 4.0 (1996), 2000 (2000), XP(2001), and CPUs down to the original Pent
 
 The LLVM patches were taken and modified from [this repo](https://github.com/mon/llvm-mingw-xp).  
 Some of the MinGW/GCC patches were taken and modified from [w64devkit](https://github.com/skeeto/w64devkit/tree/master).  
-A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's rand_s used in std::random as well.
+A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's rand_s used in std::random.
 
 ## List of patches and their purpose
 
@@ -19,7 +19,7 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
 [rand_s-win2k.patch](./mingw/rand_s-win2k.patch) - Fixes MinGW CRT `rand_s` incompatibility with Windows NT 4.0/2000, by using [`CryptGenRandom`](https://en.wikipedia.org/wiki/CryptGenRandom) instead of
                                                    XP+ [`RtlGenRandom`](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-rtlgenrandom) for cryptographically secure random number generation.
 
-[sdkddkver.h.h](./mingw/sdkddkver.h) and [winsdkver.h](./mingw/winsdkver.h) - Custom written replacements for these MSVC's headers, with expanded macros and definitions for old Windows.
+[sdkddkver.h](./mingw/sdkddkver.h) and [winsdkver.h](./mingw/winsdkver.h) - Custom written replacements for these MSVC's headers, with expanded macros and definitions for old Windows.
 
 ### GCC
 
@@ -42,10 +42,18 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
                                                                                 with [InterlockedCompareExchange](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-interlockedcompareexchange)
                                                                                 for [TLS](https://learn.microsoft.com/en-us/windows/win32/procthread/thread-local-storage).
 
-[libcxx-legacy-filesystem.patch](./llvm/libcxx-legacy-filesystem.patch) - 
+[libcxx-legacy-filesystem.patch](./llvm/libcxx-legacy-filesystem.patch) - Replaces the Vista+ filesystem APIs `libc++`'s `std::filesystem` relies on
+                                                                          ([GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex),
+                                                                          [SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfileinformationbyhandle),
+                                                                          [CreateSymbolicLinkW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw),
+                                                                          [GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew))
+                                                                          with NT 4.0/2000/XP equivalents (`GetFileInformationByHandle` + `DeviceIoControl`); symlink creation, `canonical()` and `permissions()` degrade to "not supported" on those targets.
 
-[libcxx-legacy-msvcrt-locale.patch](./llvm/libcxx-legacy-msvcrt-locale.patch) - 
+[libcxx-legacy-msvcrt-locale.patch](./llvm/libcxx-legacy-msvcrt-locale.patch) - Replaces the per-locale `_l` ctype/wctype helpers (`_islower_l`, `_towlower_l`, ...), which only exist in msvcr80+/UCRT,
+                                                                             with a thread-locale guard around the plain functions so `libc++` builds against the legacy `msvcrt.dll` (mingw-w64 supplies `_configthreadlocale`).
 
-[libcxx-legacy-msvcrt-wcrtomb_s.patch](./llvm/libcxx-legacy-msvcrt-wcrtomb_s.patch) - 
+[libcxx-legacy-msvcrt-wcrtomb_s.patch](./llvm/libcxx-legacy-msvcrt-wcrtomb_s.patch) - Shims the bounds-checked [`wcrtomb_s`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/wcrtomb-s) (msvcr80+/UCRT only)
+                                                                                   with a local lambda built on the always-available [`wcrtomb`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/wcrtomb-wcrtomb-l), for legacy `msvcrt.dll`.
 
-[libunwind-rwmutex-pre-vista.patch](./llvm/libunwind-rwmutex-pre-vista.patch) - 
+[libunwind-rwmutex-pre-vista.patch](./llvm/libunwind-rwmutex-pre-vista.patch) - Replaces the Vista+ [SRWLOCK](https://learn.microsoft.com/en-us/windows/win32/sync/slim-reader-writer--srw--locks)
+                                                                              `libunwind`'s reader/writer mutex uses with a [CRITICAL_SECTION](https://learn.microsoft.com/en-us/windows/win32/sync/critical-section-objects) fallback (available on all NT versions), keeping `libunwind` dependency-free (no winpthreads).
