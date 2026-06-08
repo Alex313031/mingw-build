@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.4"
+SCRIPTVER="2.1.5"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build_win"
@@ -297,6 +297,8 @@ apply_patches() {
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
   fi
+  execute "" "Failed to apply MinGW headers.patch" \
+      git apply --reject ../patches/headers.patch
   execute "" "Unable to mark patches as applied" \
       touch "$SRC_PATH/patches/applied_patches"
   printf "${GRE}Done patching sources!${c0}\n"

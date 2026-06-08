@@ -1,0 +1,57 @@
+diff --git a/mingw-w64-headers/include/sdkddkver.h b/mingw-w64-headers/include/sdkddkver.h
+index ee1ef33..0cc0224 100644
+--- a/mingw-w64-headers/include/sdkddkver.h
++++ b/mingw-w64-headers/include/sdkddkver.h
+@@ -169,7 +169,7 @@
+ 
+ /* Select Default WIN32_WINNT Value */
+ #if !defined(_WIN32_WINNT) && !defined(_CHICAGO_)
+-#define _WIN32_WINNT _WIN32_WINNT_WS03
++#define _WIN32_WINNT _WIN32_WINNT_WINXP
+ #endif
+ 
+ /* Choose NTDDI Version */
+@@ -184,7 +184,7 @@
+ #   define NTDDI_VERSION WDK_NTDDI_VERSION
+ #  endif
+ # else
+-#  define NTDDI_VERSION NTDDI_WS03
++#  define NTDDI_VERSION NTDDI_WINXP
+ # endif
+ #endif
+ 
+@@ -193,7 +193,7 @@
+ #ifdef _WIN32_WINNT
+ #define WINVER _WIN32_WINNT
+ #else
+-#define WINVER 0x0502
++#define WINVER _WIN32_WINNT_WINXP
+ #endif
+ #endif
+ 
+@@ -218,7 +218,7 @@
+ #define _WIN32_IE 0x0a00
+ #endif
+ #else
+-#define _WIN32_IE 0x0700
++#define _WIN32_IE _WIN32_IE_IE60
+ #endif
+ #endif
+ 
+diff --git a/mingw-w64-headers/include/winsdkver.h b/mingw-w64-headers/include/winsdkver.h
+index 62e9182..8226ea5 100644
+--- a/mingw-w64-headers/include/winsdkver.h
++++ b/mingw-w64-headers/include/winsdkver.h
+@@ -10,9 +10,9 @@
+ 
+ #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+ 
+-#define _WIN32_MAXVER         0x0A00
+-#define _WIN32_WINDOWS_MAXVER 0x0A00
+-#define NTDDI_MAXVER          0x0A00
++#define _WIN32_MAXVER         0x0490
++#define _WIN32_WINDOWS_MAXVER 0x0490
++#define NTDDI_MAXVER          0x0A000010
+ #define _WIN32_IE_MAXVER      0x0A00
+ #define _WIN32_WINNT_MAXVER   0x0A00
+ #define WINVER_MAXVER         0x0A00
