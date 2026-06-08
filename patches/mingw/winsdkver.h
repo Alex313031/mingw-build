@@ -27,6 +27,8 @@
 #define NTDDI_MAXVER            0x0A000010 // NTDDI_WIN11_24H2, Build 26100
 #define _WIN32_IE_MAXVER        0x0A00
 
+#endif // WINAPI_PARTITION_DESKTOP
+
 #endif // _INC_WINSDKVER
 
 
