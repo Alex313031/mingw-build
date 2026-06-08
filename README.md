@@ -5,7 +5,7 @@ using either the [GCC](https://gcc.gnu.org/) or [LLVM](https://llvm.org/) compil
 It includes toolchains for i586 (Win32), i686 (Win32) and x86_64 (Win64).  
 It primarily targets legacy Windows like Windows NT 4.0, Windows 2000, and XP, since latest upstream MinGW targets Vista+.  
 
-It currently contains two bash scripts, that can be run on Ubuntu or Debian.  
+It currently contains four bash scripts, that can be run on Ubuntu or Debian:  
 
 `mingw_gcc_linux.sh`:  Creates a MinGW/GCC build that runs on Linux.  
 `mingw_gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.  
@@ -21,10 +21,10 @@ versions of Windows (via patching), and provide much more customizability includ
 See the [./patches](./patches#readme) subdirectory for more info.  
 
 ## Default Branches
-* [MinGW-w64](https://mingw-w64.org) __14.x__
-* [Binutils](https://www.gnu.org/software/binutils/) __2.46__
-* [GCC](https://gcc.gnu.org/) __16.x__
-* [LLVM](https://llvm.org/) __20.x__
+* [MinGW-w64](https://mingw-w64.org) __14.x__ -> https://github.com/mingw-w64/mingw-w64/tree/v14.x
+* [Binutils](https://www.gnu.org/software/binutils/) __2.46__ -> https://github.com/RTEMS/sourceware-mirror-binutils-gdb/tree/binutils-2_46-branch
+* [GCC](https://gcc.gnu.org/) __16.x__ -> https://github.com/gcc-mirror/gcc/tree/releases/gcc-16
+* [LLVM](https://llvm.org/) __22.x__ -> https://github.com/llvm/llvm-project/tree/release/22.x
 
 ## Target Platforms
 
