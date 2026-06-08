@@ -1,4 +1,4 @@
-name: Build Windows MinGW/GCC
+name: Build Windows MinGW/LLVM
 
 # Each arch runs a two-phase Canadian cross compile.
 # (Phase 1 Linux-hosted intermediate + Phase 2 Windows-hosted)
@@ -20,31 +20,32 @@ jobs:
       fail-fast: false
       matrix:
         arch: [i586, i686, x86_64]
-    # Two from-source toolchains per arch (Phase 1 + Phase 2); still under 6h.
-    timeout-minutes: 240
+    # Two full from-source LLVM toolchains per arch (Phase 1 native + Phase 2
+    # cross); this is heavy, so allow the maximum (6h job ceiling).
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: ./mingw_gcc_win.sh --deps
+        run: ./mingw_llvm_win.sh --deps
 
       - name: Build ${{ matrix.arch }} and package
-        run: ./mingw_gcc_win.sh ${{ matrix.arch }} --package
+        run: ./mingw_llvm_win.sh ${{ matrix.arch }} --package
 
       - name: Upload build log
         # always grab the log, especially useful when the build fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log_gcc_win_${{ matrix.arch }}
-          path: build_win/build.log
+          name: build-log_llvm_win_${{ matrix.arch }}
+          path: build_win_llvm/build.log
           if-no-files-found: ignore
 
       - name: Upload toolchain zips
         uses: actions/upload-artifact@v4
         with:
           # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
-          name: mingw_gcc_win_${{ matrix.arch }}
-          path: build_win/*.zip
+          name: mingw_llvm_win_${{ matrix.arch }}
+          path: build_win_llvm/*.zip
           if-no-files-found: error

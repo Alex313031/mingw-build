@@ -1,7 +1,6 @@
-name: Build Windows MinGW/GCC
+name: Build Linux MinGW/LLVM
 
-# Each arch runs a two-phase Canadian cross compile.
-# (Phase 1 Linux-hosted intermediate + Phase 2 Windows-hosted)
+# Each arch compiles a from-source MinGW/LLVM toolchain.
 
 #   push:
 #     branches: [ main ]
@@ -11,40 +10,42 @@ on:
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    # Built on Ubuntu 22.04 (glibc 2.35), but the deliverable is a Windows-hosted
-    # toolchain (statically linked .exe binaries), so the build host's glibc does
-    # not affect where the toolchain runs -- it runs on Windows.
+    # Build on Ubuntu 22.04 (glibc 2.35) so the resulting Linux-hosted toolchain
+    # runs on Ubuntu 22.04+ / Debian 12+. 22.04 is the oldest GitHub-hosted runner
+    # image still available (20.04 was retired), so we build directly on it with
+    # no container.
     runs-on: ubuntu-22.04
     # One arch per job, in parallel; don't let one arch's failure cancel the rest.
     strategy:
       fail-fast: false
       matrix:
         arch: [i586, i686, x86_64]
-    # Two from-source toolchains per arch (Phase 1 + Phase 2); still under 6h.
+    # A full from-source LLVM/clang + runtimes build is heavy; give it room
+    # (still under the 6h job ceiling).
     timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: ./mingw_gcc_win.sh --deps
+        run: ./mingw_llvm_linux.sh --deps
 
       - name: Build ${{ matrix.arch }} and package
-        run: ./mingw_gcc_win.sh ${{ matrix.arch }} --package
+        run: ./mingw_llvm_linux.sh ${{ matrix.arch }} --package
 
       - name: Upload build log
         # always grab the log, especially useful when the build fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log_gcc_win_${{ matrix.arch }}
-          path: build_win/build.log
+          name: build-log_llvm_linux_${{ matrix.arch }}
+          path: build_llvm/build.log
           if-no-files-found: ignore
 
       - name: Upload toolchain zips
         uses: actions/upload-artifact@v4
         with:
           # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
-          name: mingw_gcc_win_${{ matrix.arch }}
-          path: build_win/*.zip
+          name: mingw_llvm_linux_${{ matrix.arch }}
+          path: build_llvm/*.zip
           if-no-files-found: error

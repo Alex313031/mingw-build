@@ -16,6 +16,8 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
 
 [gendef-no-comment.patch](./mingw/gendef-no-comment.patch) - Makes `gendef` not put annoying copyright lines in the top of your *.def* files.
 
+[headers.patch](./mingw/headers.patch) - Modifies some WinSDK version header files to default to a lower sane target.
+
 [rand_s-win2k.patch](./mingw/rand_s-win2k.patch) - Fixes MinGW CRT `rand_s` incompatibility with Windows NT 4.0/2000, by using [`CryptGenRandom`](https://en.wikipedia.org/wiki/CryptGenRandom) instead of
                                                    XP+ [`RtlGenRandom`](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-rtlgenrandom) for cryptographically secure random number generation.
 

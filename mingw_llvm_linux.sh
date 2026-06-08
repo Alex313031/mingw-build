@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.5"
+SCRIPTVER="2.1.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build_llvm"
@@ -94,7 +94,6 @@ Options:
   --prefix <path>             Change install location. (default: $ROOT_PATH/<arch>)
   --root <path>               Location for sources, build artifacts and the resulting compiler. (default: $ROOT_PATH)
   --keep-artifacts            Don't remove source and build files after a successful build.
-  --skip-llvm                 (TEMPORARY) Reuse the clang/lld already installed in the prefix and rebuild only the runtimes (compiler-rt, libc++, CRT, ...). For iterating on the legacy floor without re-building LLVM each time.
   --disable-threads           Disable pthreads and STL <thread>.
   -c, --cached-sources        Use existing sources instead of downloading new ones and patching them.
   -d, --download-sources      Only download sources, then exit; for making local modifications.
@@ -458,10 +457,8 @@ build() {
   export PATH="$prefix/bin:$PATH"
 
   remove_path "$bld_path"
-  # don't remove a user defined prefix (could be /usr/local); --skip-llvm reuses
-  # the existing prefix (that's where the clang we're reusing lives), so leave it
-  # in place and let the runtime installs overwrite their previous output.
-  if [ ! "$PREFIX" ] && [ ! "$SKIP_LLVM" ]; then
+  # don't remove a user defined prefix (could be /usr/local)
+  if [ ! "$PREFIX" ]; then
     remove_path "$prefix"
   fi
 
@@ -639,44 +636,36 @@ USE_AVX512=$avx512"
   ##############################################################################
   # 1. LLVM: clang + lld + the LLVM binutils-style tools (host compiler)
   ##############################################################################
-  if [ "$SKIP_LLVM" ]; then
-    if [ ! -x "$prefix/bin/clang" ]; then
-      error_exit "--skip-llvm: no clang found at '$prefix/bin/clang'; run once without --skip-llvm first"
-    fi
-    log "${YEL}--skip-llvm: reusing existing clang at ${bold}$prefix/bin/clang${c0}\n"
-  else
-    create_dir "$bld_path/llvm"
-    change_dir "$bld_path/llvm"
+  create_dir "$bld_path/llvm"
+  change_dir "$bld_path/llvm"
 
-    execute "($arch): Configuring LLVM (clang + lld)" "Configuring LLVM failed" \
-        cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="$prefix" \
-        -DLLVM_ENABLE_PROJECTS="clang;lld" \
-        -DLLVM_TARGETS_TO_BUILD="X86" \
-        -DLLVM_ENABLE_ASSERTIONS=OFF \
-        -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
-        -DLLVM_INCLUDE_TESTS=OFF \
-        -DLLVM_INCLUDE_BENCHMARKS=OFF \
-        -DLLVM_INCLUDE_EXAMPLES=OFF \
-        -DLLVM_ENABLE_ZSTD=OFF \
-        -DLLVM_DEFAULT_TARGET_TRIPLE="$triple" \
-        -DCLANG_DEFAULT_LINKER=lld \
-        -DCLANG_DEFAULT_RTLIB=compiler-rt \
-        -DCLANG_DEFAULT_UNWINDLIB=libunwind \
-        -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
-        -DCMAKE_C_FLAGS="$HOST_CFLAGS" \
-        -DCMAKE_CXX_FLAGS="$HOST_CXXFLAGS"
+  execute "($arch): Configuring LLVM (clang + lld)" "Configuring LLVM failed" \
+      cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$prefix" \
+      -DLLVM_ENABLE_PROJECTS="clang;lld" \
+      -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_ENABLE_ASSERTIONS=OFF \
+      -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
+      -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_INCLUDE_BENCHMARKS=OFF \
+      -DLLVM_INCLUDE_EXAMPLES=OFF \
+      -DLLVM_ENABLE_ZSTD=OFF \
+      -DLLVM_DEFAULT_TARGET_TRIPLE="$triple" \
+      -DCLANG_DEFAULT_LINKER=lld \
+      -DCLANG_DEFAULT_RTLIB=compiler-rt \
+      -DCLANG_DEFAULT_UNWINDLIB=libunwind \
+      -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
+      -DCMAKE_C_FLAGS="$HOST_CFLAGS" \
+      -DCMAKE_CXX_FLAGS="$HOST_CXXFLAGS"
 
-    execute "($arch): Building LLVM" "Building LLVM failed" \
-        ninja -j $JOB_COUNT
-    execute "($arch): Installing LLVM" "Installing LLVM failed" \
-        ninja install
-  fi
+  execute "($arch): Building LLVM" "Building LLVM failed" \
+      ninja -j $JOB_COUNT
+  execute "($arch): Installing LLVM" "Installing LLVM failed" \
+      ninja install
 
   # Toolchain entry points must exist before the autotools runtimes configure,
-  # since those use <wrap>-cc / <wrap>-ar etc. Regenerated even with --skip-llvm
-  # so the wrappers always match the current arch's SIMD flags.
+  # since those use <wrap>-cc / <wrap>-ar etc.
   generate_wrappers "$arch" "$triple" "$prefix" "$SUBSYS_LDFLAGS"
 
   local CC_WRAP="$prefix/bin/$wrap-cc"
@@ -941,9 +930,6 @@ while :; do
     --keep-artifacts)
         KEEP_ARTIFACTS=1
         ;;
-    --skip-llvm)
-        SKIP_LLVM=1
-        ;;
     --clean)
         CLEAN=1
         ;;
@@ -1185,12 +1171,7 @@ fi
 
 THREADS_STEPS=$((THREADS_STEPS * NUM_BUILDS))
 # per arch: LLVM(3) + headers(2) + crt(3) + compiler-rt(3) + runtimes(3) + gendef(3)
-# --skip-llvm drops the 3 LLVM steps per arch.
-if [ "$SKIP_LLVM" ]; then
-  BUILD_STEPS=$((14 * NUM_BUILDS))
-else
-  BUILD_STEPS=$((17 * NUM_BUILDS))
-fi
+BUILD_STEPS=$((17 * NUM_BUILDS))
 
 # one packaging step (the zip) per built arch
 if [ "$PACKAGE" ]; then

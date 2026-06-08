@@ -1,4 +1,4 @@
-name: Build Linux toolchains
+name: Build Linux MinGW/GCC
 
 # Each arch compiles a from-source MinGW/GCC toolchain.
 
@@ -27,17 +27,17 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: ./mingw-linux-build.sh --deps
+        run: ./mingw_gcc_linux.sh --deps
 
       - name: Build ${{ matrix.arch }} and package
-        run: ./mingw-linux-build.sh ${{ matrix.arch }} --package
+        run: ./mingw_gcc_linux.sh ${{ matrix.arch }} --package
 
       - name: Upload build log
         # always grab the log, especially useful when the build fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log_${{ matrix.arch }}
+          name: build-log_gcc_linux_${{ matrix.arch }}
           path: build/build.log
           if-no-files-found: ignore
 
@@ -45,6 +45,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # one zip per job: i586.zip, i686.zip, or x64.zip (x86_64)
-          name: mingw_linux_${{ matrix.arch }}
+          name: mingw_gcc_linux_${{ matrix.arch }}
           path: build/*.zip
           if-no-files-found: error
