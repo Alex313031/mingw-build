@@ -5,14 +5,14 @@ using either the [GCC](https://gcc.gnu.org/) or [LLVM](https://llvm.org/) compil
 It includes toolchains for i586 (Win32), i686 (Win32) and x86_64 (Win64).  
 It primarily targets legacy Windows like Windows NT 4.0, Windows 2000, and XP, since latest upstream MinGW targets Vista+.  
 
-It currently contains two bash scripts, that can be run on Ubuntu or Debian.
+It currently contains two bash scripts, that can be run on Ubuntu or Debian.  
 
-`mingw_gcc_linux.sh`:  Creates a MinGW/GCC build that runs on Linux.
-`mingw_gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.
-`mingw_llvm_linux.sh`: Creates a MinGW/LLVM build that runs on Linux.
-`mingw_llvm_win.sh`:   Creates a MinGW/LLVM build that runs on Windows.
+`mingw_gcc_linux.sh`:  Creates a MinGW/GCC build that runs on Linux.  
+`mingw_gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.  
+`mingw_llvm_linux.sh`: Creates a MinGW/LLVM build that runs on Linux.  
+`mingw_llvm_win.sh`:   Creates a MinGW/LLVM build that runs on Windows.  
 
-I use it with [GN-Legacy](https://github.com/Alex313031/gn-legacy#readme) on Linux to compile many of my Win32 projects, that I specifically code to be compatible with legacy Windows for fun.
+I use it with [GN-Legacy](https://github.com/Alex313031/gn-legacy#readme) on Linux to compile many of my Win32 projects, that I specifically code to be compatible with legacy Windows for fun.  
 
 ## Patches
 
