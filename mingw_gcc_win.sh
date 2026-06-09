@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.7"
+SCRIPTVER="2.1.8"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -592,9 +592,17 @@ USE_AVX512=$avx512"
   create_dir "$bld_path/binutils" &&
   change_dir "$bld_path/binutils" &&
 
+  # --program-prefix forces the $host- prefix on the installed tool names. The
+  # pure-cross Linux build gets this automatically (host != target), but Phase 2
+  # has --host == --target, which GNU configure treats as native and would leave
+  # the tools unprefixed (windres, ar, ...). Setting it explicitly keeps bin/
+  # carrying a single prefixed copy of each tool (no duplication); gcc still finds
+  # plain as/ld via the target tooldir ($prefix/$host/bin), exactly as the Linux
+  # build does.
   execute "($arch): Configuring Binutils" "" \
       "$SRC_PATH/binutils/configure" --prefix="$prefix" --disable-shared \
       --enable-static --with-sysroot="$prefix" --target="$host" \
+      --program-prefix="$host-" \
       --disable-multilib --disable-nls --enable-lto --disable-gdb $CROSS_FLAGS \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 

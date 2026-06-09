@@ -1,4 +1,4 @@
-name: Build Windows MinGW/GCC
+name: Build Windows GCC MinGW
 
 # Each arch runs a two-phase Canadian cross compile.
 # (Phase 1 Linux-hosted intermediate + Phase 2 Windows-hosted)
@@ -29,11 +29,8 @@ jobs:
       - name: Install build dependencies
         run: ./mingw_gcc_win.sh --deps
 
-      - name: Build ${{ matrix.arch }}
-        run: ./mingw_gcc_win.sh ${{ matrix.arch }}
-
-      - name: Prepare Artifacts
-        run: mkdir -v _artifacts && cp -al build/win_gcc/${{ matrix.arch }} _artifacts/
+      - name: Build and package ${{ matrix.arch }}
+        run: ./mingw_gcc_win.sh ${{ matrix.arch }} --package
 
       - name: Upload build log
         # always grab the log, especially useful when the build fails
@@ -47,12 +44,11 @@ jobs:
       - name: Upload toolchain zips
         uses: actions/upload-artifact@v4
         with:
-          # Upload the staged _artifacts dir (which holds exactly the one toolchain
-          # folder). upload-artifact roots the zip at the given path's CONTENTS, so
-          # pointing at _artifacts keeps the top-level "<prefix>/" folder inside the
-          # zip (pointing at _artifacts/<prefix> would drop it, leaving bare bin/...).
-          # That top folder is what lets the GN repo's `unzip -d tools/mingw/win`
-          # land this as tools/mingw/win/<prefix>/.
+          # Upload the script's own .zip (from --package). The Windows-hosted build
+          # packages WITHOUT -y, so any symlinks are materialized into real copies
+          # (Windows can't use symlinks). upload-artifact re-zips it, so the downloaded
+          # artifact is <name>.zip containing the inner <prefix>.zip; extract that inner
+          # zip and upload it as the release asset download_toolchains.sh fetches.
           name: mingw_gcc_win_${{ matrix.arch }}
-          path: _artifacts
+          path: build/win_gcc/*.zip
           if-no-files-found: error

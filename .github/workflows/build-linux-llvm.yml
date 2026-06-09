@@ -1,4 +1,4 @@
-name: Build Linux MinGW/LLVM
+name: Build Linux LLVM MinGW
 
 # Each arch compiles a from-source MinGW/LLVM toolchain.
 
@@ -30,11 +30,8 @@ jobs:
       - name: Install build dependencies
         run: ./mingw_llvm_linux.sh --deps
 
-      - name: Build ${{ matrix.arch }}
-        run: ./mingw_llvm_linux.sh ${{ matrix.arch }}
-
-      - name: Prepare Artifacts
-        run: mkdir -v _artifacts && cp -al build/linux_llvm/${{ matrix.arch }}_llvm _artifacts/
+      - name: Build and package ${{ matrix.arch }}
+        run: ./mingw_llvm_linux.sh ${{ matrix.arch }} --package
 
       - name: Upload build log
         # always grab the log, especially useful when the build fails
@@ -48,12 +45,11 @@ jobs:
       - name: Upload toolchain zips
         uses: actions/upload-artifact@v4
         with:
-          # Upload the staged _artifacts dir (which holds exactly the one toolchain
-          # folder, <arch>_llvm). upload-artifact roots the zip at the given path's
-          # CONTENTS, so pointing at _artifacts keeps the top-level "<prefix>/" folder
-          # inside the zip (pointing at _artifacts/<prefix> would drop it). That top
-          # folder lets the GN repo's `unzip -d tools/mingw/linux` land this as
-          # tools/mingw/linux/<arch>_llvm/.
+          # Upload the script's own .zip (from --package, built with -y so the
+          # toolchain's symlinks -- the LLVM wrappers + llvm-* tools -- are preserved
+          # instead of duplicated). upload-artifact re-zips it, so the downloaded
+          # artifact is <name>.zip containing the inner <arch>_llvm.zip; extract that
+          # inner zip and upload it as the release asset download_toolchains.sh fetches.
           name: mingw_llvm_linux_${{ matrix.arch }}
-          path: _artifacts
+          path: build/linux_llvm/*.zip
           if-no-files-found: error

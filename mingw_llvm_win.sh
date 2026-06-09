@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.7"
+SCRIPTVER="2.1.8"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"

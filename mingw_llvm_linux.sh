@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.7"
+SCRIPTVER="2.1.8"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -834,10 +834,13 @@ USE_AVX512=$avx512"
   log "${GRE}Done building for arch ${CYA}$arch ${c0}\n"
 }
 
-# Zip an arch's install prefix into <root>/<pkgname>.zip. The 64-bit build is
-# packaged as x64.zip even though its prefix dir is x86_64; to give the archive a
-# matching top-level folder we stage a hardlink tree (cheap, no extra disk, and
-# leaves the original prefix untouched).
+# Zip an arch's install prefix into <root>/<pkgname>.zip. pkgname matches the
+# prefix dir name, so the archive carries a matching top-level folder. -y stores
+# symlinks AS symlinks instead of dereferencing each into a full duplicate copy,
+# keeping the archive compact (important here: the LLVM wrappers + llvm-* tools
+# are symlinks); the Linux-hosted toolchain's symlinks are recreated by unzip on
+# Linux. (The Windows-hosted build omits -y - Windows can't use symlinks, so there
+# they must be materialized into real copies.)
 package_arch() {
   local arch="$1" pkgname="$2"
   local dir="$ROOT_PATH/$arch"
@@ -847,13 +850,13 @@ package_arch() {
   rm -f "$pkgname.zip"
   if [ "$arch" = "$pkgname" ]; then
     execute "Packaging ${pkgname}.zip..." "Failed to create ${pkgname}.zip" \
-        zip -r -q "$pkgname.zip" "$arch"
+        zip -r -q -y "$pkgname.zip" "$arch"
   else
     remove_path "$pkgname"
     execute "Running cp -al" "Failed to stage '$pkgname'" \
         cp -al "$arch" "$pkgname"
     execute "Packaging ${pkgname}.zip..." "Failed to create ${pkgname}.zip" \
-        zip -r -q "$pkgname.zip" "$pkgname"
+        zip -r -q -y "$pkgname.zip" "$pkgname"
     remove_path "$pkgname"
   fi
 }
