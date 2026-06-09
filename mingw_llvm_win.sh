@@ -621,7 +621,7 @@ USE_AVX512=$avx512"
   # HOST_CFLAGS build the host LLVM tools. In Phase 1 they run on Linux; in
   # Phase 2 they run on the Windows target, so there they use the arch SIMD
   # baseline instead (see build_phase2_windows).
-  HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -msse3 -pipe"
+  HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe"
   HOST_CXXFLAGS="$HOST_CFLAGS"
 
   if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then

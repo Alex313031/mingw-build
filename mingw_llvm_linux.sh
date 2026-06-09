@@ -597,8 +597,8 @@ USE_AVX512=$avx512"
   local TARGET_CXXFLAGS="$TARGET_CFLAGS"
 
   # HOST_CFLAGS are used to build the LLVM host tools that run on the build
-  # machine (clang, lld, llvm-*). Most users building this are on capable CPUs.
-  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -msse3 -pipe"
+  # machine (clang, lld, llvm-*).
+  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe"
   local HOST_CXXFLAGS="$HOST_CFLAGS"
 
   if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then

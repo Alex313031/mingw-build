@@ -561,12 +561,8 @@ USE_AVX512=$avx512"
 
   # HOST_CFLAGS are used to build the toolchain tools themselves (binutils, the
   # gcc driver, gendef) -- which run on the build machine in Phase 1 and on the
-  # Windows host in Phase 2. They must NOT inherit the target's
-  # -mno-sse/-mfpmath=387: on x86-64 the SysV ABI returns doubles in SSE
-  # registers, so -mno-sse breaks the host build of libiberty with
-  # "SSE register return with SSE disabled".
-  # Always use SSE3, since most people using this project will be on capable CPUs
-  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -msse3 -pipe"
+  # Windows host in Phase 2.
+  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe"
   local HOST_CXXFLAGS="$HOST_CFLAGS"
   local HOST_LDFLAGS="$HOST_STATIC $STRIP_FLAG"
 
