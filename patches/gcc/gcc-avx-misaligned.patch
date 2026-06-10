@@ -1,0 +1,20 @@
+Treat AVX register spills as always unaligned, eliminating the
+requirement for -Wa,-muse-unaligned-vector-move when targeting
+AVX-capable hardware.
+
+https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412
+
+diff --git a/gcc/config/i386/predicates.md b/gcc/config/i386/predicates.md
+index cf3a68a9f..13621c3ee 100644
+--- a/gcc/config/i386/predicates.md
++++ b/gcc/config/i386/predicates.md
+@@ -1760,7 +1760,8 @@
+ ;; less than its natural alignment.
+ (define_predicate "misaligned_operand"
+   (and (match_code "mem")
+-       (match_test "MEM_ALIGN (op) < GET_MODE_BITSIZE (mode)")))
++       (ior (match_test "MEM_SIZE (op) > 16")
++            (match_test "MEM_ALIGN (op) < GET_MODE_BITSIZE (mode)"))))
+ 
+ ;; Return true if OP is a parallel for an mov{d,q,dqa,ps,pd} vec_select,
+ ;; where one of the two operands of the vec_concat is const0_operand.

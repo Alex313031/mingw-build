@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.9"
+SCRIPTVER="2.2.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -334,8 +334,8 @@ apply_patches() {
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
-  execute "" "Failed to apply gendef-no-comment.patch" \
-      git apply --reject ../patches/gendef-no-comment.patch
+  execute "" "Failed to apply gendef-silent.patch" \
+      git apply --reject ../patches/gendef-silent.patch
   if (( WIN32_WINNT < 0x0501 )); then
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
@@ -452,7 +452,7 @@ EOF
 
 # Lay down the Windows toolchain entry points for the Phase 2 deliverable.
 # Rather than copy the ~100 MB clang.exe per triple name, compile one tiny shared
-# wrapper (assets/clang-target-wrapper.c, modelled on llvm-mingw's) and copy it
+# wrapper (assets/src/clang-target-wrapper.c, modelled on llvm-mingw's) and copy it
 # to every <triple>-<tool>.exe. At runtime it reads its own argv[0] and execs the
 # single real binary next to it: clang (with -target/--driver-mode plus the PE
 # subsystem/OS-version defaults) for the drivers, or the matching llvm-* (ld ->
@@ -475,7 +475,7 @@ generate_wrappers_windows() {
   execute "($arch P2): Building toolchain entry-point wrapper" "Building wrapper failed" \
       "$cc" -O3 -s -static -municode \
       -DUNICODE -D_UNICODE -DTARGET="\"$triple\"" -DEXTRA="\"$SUBSYS_LDFLAGS\"" \
-      "$HERE/assets/clang-target-wrapper.c" -o "$wrapper"
+      "$HERE/assets/src/clang-target-wrapper.c" -o "$wrapper"
 
   # Stamp the wrapper out under every entry-point name (a few KB each).
   local name

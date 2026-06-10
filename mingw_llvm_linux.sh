@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.9"
+SCRIPTVER="2.2.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -319,8 +319,8 @@ apply_patches() {
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
-  execute "" "Failed to apply gendef-no-comment.patch" \
-      git apply --reject ../patches/gendef-no-comment.patch
+  execute "" "Failed to apply gendef-silent.patch" \
+      git apply --reject ../patches/gendef-silent.patch
   if (( WIN32_WINNT < 0x0501 )); then
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch

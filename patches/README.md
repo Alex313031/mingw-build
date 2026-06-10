@@ -14,7 +14,7 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
 
 ### MinGW
 
-[gendef-no-comment.patch](./mingw/gendef-no-comment.patch) - Makes `gendef` not put annoying copyright lines in the top of your *.def* files.
+[gendef-silent.patch](./mingw/gendef-silent.patch) - Makes `gendef` silent: drops the `Found PE...` progress lines it prints to the console, and the copyright/comment header it writes at the top of your *.def* files.
 
 [headers.patch](./mingw/headers.patch) - Modifies some WinSDK version header files to default to a lower sane target.
 
@@ -29,12 +29,16 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
 
 [gcc-trap-terminate.patch](./gcc/gcc-trap-terminate.patch) - Replaces `std::terminate`'s __std::abort__ function with a __&#95;&#95;builtin_trap__ trap instruction.
 
+[gcc-avx-misaligned.patch](./gcc/gcc-avx-misaligned.patch) - Treats AVX register spills as always unaligned, removing the need for `-Wa,-muse-unaligned-vector-move` when targeting AVX-capable hardware ([GCC PR54412](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412)).
+
 [gcc-tzdb-getdynamic.patch](./gcc/gcc-tzdb-getdynamic.patch) - Fixes C++20 compatability by using [GetTimeZoneInformation](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-gettimezoneinformation) instead of
                                                                Vista+ [GetDynamicTimeZoneInformation](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-getdynamictimezoneinformation).
 
 ### Binutils
 
 [binutils-dlltool-zero-ordinals.patch](./binutils-gdb/binutils-dlltool-zero-ordinals.patch) - Prevents randomizing function ordinals in libraries, which is good for reproducible builds and making static libraries more compatible.
+
+[gdb-confirm-off.patch](./binutils-gdb/gdb-confirm-off.patch) - Turns off GDB's `confirm` prompt by default; its notion of "potentially dangerous" operations is far too broad and creates needless friction.
 
 [gdb-alternate-main.patch](./binutils-gdb/gdb-alternate-main.patch) - Allows [GDB](https://sourceware.org/gdb/) to pick up Win32 specific entry point function names like __wWinMain__, __mainCRTStartup__, etc.
 

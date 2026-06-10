@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.1.9"
+SCRIPTVER="2.2.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -277,22 +277,27 @@ apply_patches() {
   change_dir "$SRC_PATH/binutils"
   execute "" "Failed to apply binutils-dlltool-zero-ordinals.patch" \
       git apply --reject ../patches/binutils-dlltool-zero-ordinals.patch
+  printf "${YEL}  Patching GDB...${c0}\n"
+  execute "" "Failed to apply gdb-confirm-off.patch" \
+      git apply --reject ../patches/gdb-confirm-off.patch
+  execute "" "Failed to apply gdb-alternate-main.patch" \
+      git apply --reject ../patches/gdb-alternate-main.patch
   printf "${YEL}  Patching GCC...${c0}\n"
   change_dir "$SRC_PATH/gcc"
   execute "" "Failed to apply gcc-stdcall-align.patch" \
       git apply --reject ../patches/gcc-stdcall-align.patch
   execute "" "Failed to apply gcc-trap-terminate.patch" \
       git apply --reject ../patches/gcc-trap-terminate.patch
-  #execute "" "Failed to apply gdb-alternate-main.patch" \
-  #    git apply --reject ../patches/gdb-alternate-main.patch
+  execute "" "Failed to apply gcc-avx-misaligned.patch" \
+      git apply --reject ../patches/gcc-avx-misaligned.patch
   if (( WIN32_WINNT < 0x0600 )); then
     execute "" "Failed to apply gcc-tzdb-getdynamic.patch" \
         git apply --reject ../patches/gcc-tzdb-getdynamic.patch
   fi
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
-  execute "" "Failed to apply gendef-no-comment.patch" \
-      git apply --reject ../patches/gendef-no-comment.patch
+  execute "" "Failed to apply gendef-silent.patch" \
+      git apply --reject ../patches/gendef-silent.patch
   if (( WIN32_WINNT < 0x0501 )); then
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
