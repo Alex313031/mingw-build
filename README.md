@@ -18,7 +18,7 @@ I use it with [GN-Legacy](https://github.com/Alex313031/gn-legacy#readme) on Lin
 
 This is a fork of [Zeranoe's mingw-w64-build repo](https://github.com/Zeranoe/mingw-w64-build#readme), and is specifically designed to support very old
 versions of Windows (via patching), and provide much more customizability including many [SIMD](https://en.wikipedia.org/wiki/Single_instruction,_multiple_data) optimization options.  
-See the [./patches](./patches#readme) subdirectory for more info.  
+See the [./patches](./patches/README.md) subdirectory for more info.  
 
 <img src="./assets/WinNT4Workstation_Logo.svg" height="64"> <img src="./assets/Win2000Pro_Logo.svg" height="64"> <img src="./assets/WinXPPro_Logo.svg" height="64"> <img src="./assets/WinVista_Orb.svg" height="64">
 
@@ -66,6 +66,22 @@ It does not need to be "installed", the prefix simply chooses where to put built
 One can run --package, and simply copy the .zip somewhere, and unpack it.
 Then, add the dir `<where_you_extracted_it>/bin` to your `$PATH`. And add/update the `$MINGW_HOME` environment variable to point to `<where_you_extracted_it>`.
 
+## Resources
+These are repos that helped me when creating this repo:
+
+[w64devkit](https://github.com/skeeto/w64devkit) - A small native MinGW toolchain for Windows with extra utilities. More complete than mine, but doesn't build easily or support anything older than XP.
+                                                   Some patches and sources were adapted from this repo.
+
+[llvm-mingw-xp](https://github.com/mon/llvm-mingw-xp) - LLVM MinGW toolchain that runs on XP, was used for helping with cross compilation and the LLVM wrapper.
+
+See [assets](./assets/README.md) for more info.
+
 ## License
 This repo is licensed under the GNU GPL 3.0 or later.  
 A copy of the license can be found in the [LICENSE.md](./LICENSE.md) file.
+
+LLVM is licensed under the [ISC License](https://en.wikipedia.org/wiki/ISC_license).
+
+MinGW is licensed under the [Zope Public License](https://en.wikipedia.org/wiki/Zope_Public_License).
+
+GCC/GDB/Binutils are licensed under the [GNU GPL 2.0 License](https://en.wikipedia.org/wiki/GNU_General_Public_License#Version_2).
