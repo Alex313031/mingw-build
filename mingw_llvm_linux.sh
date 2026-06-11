@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.1"
+SCRIPTVER="2.2.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -317,6 +317,10 @@ apply_patches() {
   # used GetSystemInfo).
   execute "" "Failed to apply libcxx-thread-getsysteminfo.patch" \
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
+  # Lets the Windows-hosted clang/lld/llvm-* LOAD on XP/2000 (inert here -- the
+  # Windows lib/Support/*.inc isn't compiled in a Linux-hosted build).
+  execute "" "Failed to apply llvm-support-pre-vista.patch" \
+      git apply --reject ../patches/llvm-support-pre-vista.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
   execute "" "Failed to apply gendef-silent.patch" \

@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.1"
+SCRIPTVER="2.2.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -332,6 +332,8 @@ apply_patches() {
   # used GetSystemInfo).
   execute "" "Failed to apply libcxx-thread-getsysteminfo.patch" \
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
+  execute "" "Failed to apply llvm-support-pre-vista.patch" \
+      git apply --reject ../patches/llvm-support-pre-vista.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
   execute "" "Failed to apply gendef-silent.patch" \

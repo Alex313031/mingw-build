@@ -1,0 +1,251 @@
+Makes the LLVM toolchain binaries (clang, lld, llvm-*) LOAD and run on
+Windows XP/2000. lib/Support's Windows code statically imports six Vista+/
+Win7+ functions (GetFinalPathNameByHandleW, SetFileInformationByHandle, and
+the processor-group APIs GetLogicalProcessorInformationEx /
+Get|Set ThreadGroupAffinity / GetProcessGroupAffinity); a static import of a
+missing function makes the whole .exe fail to start on pre-Vista. Resolve
+them dynamically via GetProcAddress (as LLVM already does for
+PrefetchVirtualMemory) and fall back: realPathFromHandle fails soft, rename
+uses MoveFileExW by path, and the processor-group code collapses to a single
+GetSystemInfo group with no thread-group affinity.
+
+diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
+index 97dd75a74..eab56c7de 100644
+--- a/llvm/lib/Support/Windows/Path.inc
++++ b/llvm/lib/Support/Windows/Path.inc
+@@ -448,18 +448,52 @@ std::error_code is_local(const Twine &path, bool &result) {
+   return is_local_internal(WidePath, result);
+ }
+ 
++// GetFinalPathNameByHandleW (Vista) and SetFileInformationByHandle (Vista) are
++// resolved dynamically so clang/lld still LOAD on Windows XP/2000, where a
++// static import of either would block process startup. When absent,
++// realPathFromHandle fails soft (its callers ignore the result or fall back)
++// and rename() routes through MoveFileExW by path; remove() already deletes via
++// FILE_FLAG_DELETE_ON_CLOSE, which works on every NT.
++namespace {
++struct VistaFileApi {
++  using GetFinalPathNameByHandleW_t = DWORD(WINAPI *)(HANDLE, LPWSTR, DWORD,
++                                                      DWORD);
++  using SetFileInformationByHandle_t =
++      BOOL(WINAPI *)(HANDLE, FILE_INFO_BY_HANDLE_CLASS, LPVOID, DWORD);
++  GetFinalPathNameByHandleW_t GetFinalPathNameByHandleW = nullptr;
++  SetFileInformationByHandle_t SetFileInformationByHandle = nullptr;
++  VistaFileApi() {
++    // kernel32 is always mapped, so GetModuleHandleW is safe (no DLL search).
++    HMODULE K = ::GetModuleHandleW(L"kernel32.dll");
++    if (!K)
++      return;
++    GetFinalPathNameByHandleW = (GetFinalPathNameByHandleW_t)::GetProcAddress(
++        K, "GetFinalPathNameByHandleW");
++    SetFileInformationByHandle = (SetFileInformationByHandle_t)::GetProcAddress(
++        K, "SetFileInformationByHandle");
++  }
++};
++static const VistaFileApi &vistaFileApi() {
++  static VistaFileApi API;
++  return API;
++}
++} // namespace
++
+ static std::error_code realPathFromHandle(HANDLE H,
+                                           SmallVectorImpl<wchar_t> &Buffer,
+                                           DWORD flags = VOLUME_NAME_DOS) {
++  auto GetFinalPathNameByHandleW = vistaFileApi().GetFinalPathNameByHandleW;
++  if (!GetFinalPathNameByHandleW)
++    return mapWindowsError(ERROR_CALL_NOT_IMPLEMENTED);
+   Buffer.resize_for_overwrite(Buffer.capacity());
+-  DWORD CountChars = ::GetFinalPathNameByHandleW(
++  DWORD CountChars = GetFinalPathNameByHandleW(
+       H, Buffer.begin(), Buffer.capacity(), FILE_NAME_NORMALIZED | flags);
+   if (CountChars && CountChars >= Buffer.capacity()) {
+     // The buffer wasn't big enough, try again.  In this case the return value
+     // *does* indicate the size of the null terminator.
+     Buffer.resize_for_overwrite(CountChars);
+-    CountChars = ::GetFinalPathNameByHandleW(H, Buffer.begin(), Buffer.size(),
+-                                             FILE_NAME_NORMALIZED | flags);
++    CountChars = GetFinalPathNameByHandleW(H, Buffer.begin(), Buffer.size(),
++                                           FILE_NAME_NORMALIZED | flags);
+   }
+   Buffer.truncate(CountChars);
+   if (CountChars == 0)
+@@ -501,6 +535,9 @@ std::error_code is_local(int FD, bool &Result) {
+ }
+ 
+ static std::error_code setDeleteDisposition(HANDLE Handle, bool Delete) {
++  auto SetFileInformationByHandle = vistaFileApi().SetFileInformationByHandle;
++  if (!SetFileInformationByHandle)
++    return mapWindowsError(ERROR_CALL_NOT_IMPLEMENTED);
+   // Clear the FILE_DISPOSITION_INFO flag first, before checking if it's a
+   // network file. On Windows 7 the function realPathFromHandle() below fails
+   // if the FILE_DISPOSITION_INFO flag was already set to 'DeleteFile = true' by
+@@ -538,6 +575,9 @@ static std::error_code setDeleteDisposition(HANDLE Handle, bool Delete) {
+ 
+ static std::error_code rename_internal(HANDLE FromHandle, const Twine &To,
+                                        bool ReplaceIfExists) {
++  auto SetFileInformationByHandle = vistaFileApi().SetFileInformationByHandle;
++  if (!SetFileInformationByHandle)
++    return mapWindowsError(ERROR_CALL_NOT_IMPLEMENTED);
+   SmallVector<wchar_t, 0> ToWide;
+   if (auto EC = widenPath(To, ToWide))
+     return EC;
+@@ -664,6 +704,19 @@ std::error_code rename(const Twine &From, const Twine &To) {
+   if (std::error_code EC = widenPath(From, WideFrom))
+     return EC;
+ 
++  // Pre-Vista has no SetFileInformationByHandle, so the handle-based rename
++  // below can't run. Rename by path with MoveFileExW (available since NT),
++  // which also avoids needing GetFinalPathNameByHandleW for the from-path.
++  if (!vistaFileApi().SetFileInformationByHandle) {
++    SmallVector<wchar_t, 128> WideTo;
++    if (std::error_code EC = widenPath(To, WideTo))
++      return EC;
++    if (::MoveFileExW(WideFrom.begin(), WideTo.begin(),
++                      MOVEFILE_REPLACE_EXISTING))
++      return std::error_code();
++    return mapWindowsError(::GetLastError());
++  }
++
+   ScopedFileHandle FromHandle;
+   // Retry this a few times to defeat badly behaved file system scanners.
+   for (unsigned Retry = 0; Retry != 200; ++Retry) {
+diff --git a/llvm/lib/Support/Windows/Threading.inc b/llvm/lib/Support/Windows/Threading.inc
+index 86e46b99c..183c25e3b 100644
+--- a/llvm/lib/Support/Windows/Threading.inc
++++ b/llvm/lib/Support/Windows/Threading.inc
+@@ -168,15 +168,59 @@ struct ProcessorGroup {
+   }
+ };
+ 
++// The processor-group APIs are Win7+. They don't exist on Vista/XP/2000, and a
++// static import would stop clang/lld from LOADING there, so resolve them
++// dynamically (LLVM does the same for PrefetchVirtualMemory). When absent,
++// getProcessorGroups() falls back to a single group from GetSystemInfo and
++// thread-group affinity is skipped -- correct for a single-group system.
++namespace {
++struct ProcGroupApi {
++  using GetLogicalProcessorInformationEx_t =
++      BOOL(WINAPI *)(LOGICAL_PROCESSOR_RELATIONSHIP,
++                     PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, PDWORD);
++  using GetProcessGroupAffinity_t = BOOL(WINAPI *)(HANDLE, PUSHORT, PUSHORT);
++  using GetThreadGroupAffinity_t = BOOL(WINAPI *)(HANDLE, PGROUP_AFFINITY);
++  using SetThreadGroupAffinity_t =
++      BOOL(WINAPI *)(HANDLE, const GROUP_AFFINITY *, PGROUP_AFFINITY);
++  GetLogicalProcessorInformationEx_t GetLogicalProcessorInformationEx = nullptr;
++  GetProcessGroupAffinity_t GetProcessGroupAffinity = nullptr;
++  GetThreadGroupAffinity_t GetThreadGroupAffinity = nullptr;
++  SetThreadGroupAffinity_t SetThreadGroupAffinity = nullptr;
++  ProcGroupApi() {
++    // kernel32 is always mapped, so GetModuleHandleW is safe (no DLL search).
++    HMODULE K = ::GetModuleHandleW(L"kernel32.dll");
++    if (!K)
++      return;
++    GetLogicalProcessorInformationEx =
++        (GetLogicalProcessorInformationEx_t)::GetProcAddress(
++            K, "GetLogicalProcessorInformationEx");
++    GetProcessGroupAffinity = (GetProcessGroupAffinity_t)::GetProcAddress(
++        K, "GetProcessGroupAffinity");
++    GetThreadGroupAffinity = (GetThreadGroupAffinity_t)::GetProcAddress(
++        K, "GetThreadGroupAffinity");
++    SetThreadGroupAffinity = (SetThreadGroupAffinity_t)::GetProcAddress(
++        K, "SetThreadGroupAffinity");
++  }
++};
++static const ProcGroupApi &procGroupApi() {
++  static ProcGroupApi API;
++  return API;
++}
++} // namespace
++
+ template <typename F>
+ static bool IterateProcInfo(LOGICAL_PROCESSOR_RELATIONSHIP Relationship, F Fn) {
++  auto GetLogicalProcessorInformationEx =
++      procGroupApi().GetLogicalProcessorInformationEx;
++  if (!GetLogicalProcessorInformationEx)
++    return false;
+   DWORD Len = 0;
+-  BOOL R = ::GetLogicalProcessorInformationEx(Relationship, NULL, &Len);
++  BOOL R = GetLogicalProcessorInformationEx(Relationship, NULL, &Len);
+   if (R || GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+     return false;
+ 
+   auto *Info = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)calloc(1, Len);
+-  R = ::GetLogicalProcessorInformationEx(Relationship, Info, &Len);
++  R = GetLogicalProcessorInformationEx(Relationship, Info, &Len);
+   if (R) {
+     auto *End =
+         (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((uint8_t *)Info + Len);
+@@ -193,8 +237,11 @@ static bool IterateProcInfo(LOGICAL_PROCESSOR_RELATIONSHIP Relationship, F Fn) {
+ }
+ 
+ static std::optional<std::vector<USHORT>> getActiveGroups() {
++  auto GetProcessGroupAffinity = procGroupApi().GetProcessGroupAffinity;
++  if (!GetProcessGroupAffinity)
++    return std::nullopt;
+   USHORT Count = 0;
+-  if (::GetProcessGroupAffinity(GetCurrentProcess(), &Count, nullptr))
++  if (GetProcessGroupAffinity(GetCurrentProcess(), &Count, nullptr))
+     return std::nullopt;
+ 
+   if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+@@ -202,7 +249,7 @@ static std::optional<std::vector<USHORT>> getActiveGroups() {
+ 
+   std::vector<USHORT> Groups;
+   Groups.resize(Count);
+-  if (!::GetProcessGroupAffinity(GetCurrentProcess(), &Count, Groups.data()))
++  if (!GetProcessGroupAffinity(GetCurrentProcess(), &Count, Groups.data()))
+     return std::nullopt;
+ 
+   return Groups;
+@@ -212,6 +259,26 @@ static ArrayRef<ProcessorGroup> getProcessorGroups() {
+   auto computeGroups = []() {
+     SmallVector<ProcessorGroup, 4> Groups;
+ 
++    // Pre-Win7 has no processor-group APIs; synthesize a single group from the
++    // legacy SYSTEM_INFO so core/thread counting still works (one group, no
++    // cross-group affinity -- correct for such systems).
++    const ProcGroupApi &Api = procGroupApi();
++    if (!Api.GetLogicalProcessorInformationEx || !Api.GetProcessGroupAffinity) {
++      SYSTEM_INFO SI;
++      ::GetSystemInfo(&SI);
++      unsigned N = SI.dwNumberOfProcessors ? SI.dwNumberOfProcessors : 1;
++      if (N > 64)
++        N = 64;
++      ProcessorGroup G;
++      G.ID = 0;
++      G.AllThreads = N;
++      G.UsableThreads = N;
++      G.ThreadsPerCore = 1;
++      G.Affinity = (N >= 64) ? ~0ULL : ((1ULL << N) - 1);
++      Groups.push_back(G);
++      return std::vector<ProcessorGroup>(Groups.begin(), Groups.end());
++    }
++
+     auto HandleGroup = [&](SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *ProcInfo) {
+       GROUP_RELATIONSHIP &El = ProcInfo->Group;
+       for (unsigned J = 0; J < El.ActiveGroupCount; ++J) {
+@@ -340,12 +407,22 @@ void llvm::ThreadPoolStrategy::apply_thread_strategy(
+   GROUP_AFFINITY Affinity{};
+   Affinity.Group = Groups[*Socket].ID;
+   Affinity.Mask = Groups[*Socket].Affinity;
+-  SetThreadGroupAffinity(GetCurrentThread(), &Affinity, nullptr);
++  if (procGroupApi().SetThreadGroupAffinity)
++    procGroupApi().SetThreadGroupAffinity(GetCurrentThread(), &Affinity,
++                                          nullptr);
+ }
+ 
+ llvm::BitVector llvm::get_thread_affinity_mask() {
+   GROUP_AFFINITY Affinity{};
+-  GetThreadGroupAffinity(GetCurrentThread(), &Affinity);
++  if (procGroupApi().GetThreadGroupAffinity) {
++    procGroupApi().GetThreadGroupAffinity(GetCurrentThread(), &Affinity);
++  } else {
++    // Pre-Win7: single group; use the legacy process affinity mask.
++    DWORD_PTR ProcMask = 0, SysMask = 0;
++    ::GetProcessAffinityMask(::GetCurrentProcess(), &ProcMask, &SysMask);
++    Affinity.Group = 0;
++    Affinity.Mask = ProcMask;
++  }
+ 
+   static unsigned All =
+       aggregate(getProcessorGroups(),

@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.1"
+SCRIPTVER="2.2.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -571,6 +571,15 @@ USE_AVX512=$avx512"
 
   execute "($arch): Installing Binutils" "" \
       make install $VFLAGS
+
+  # --disable-shared builds binutils' "libdep" plugin (lets a static .a declare
+  # its own library dependencies) as a NON-loadable static archive, but install
+  # still drops it into lib/bfd-plugins/, where ld/ar/nm LoadLibrary() every
+  # file. On Windows that pops a "not a valid Windows image" dialog on every link
+  # (the load is best-effort, so links still succeed); Linux ignores the non-.so
+  # silently. It's unusable either way, so prune it.
+  execute "" "Failed to prune bfd-plugins/libdep" \
+      rm -f "$prefix/lib/bfd-plugins/libdep.a" "$prefix/lib/bfd-plugins/libdep.la"
 
   create_dir "$bld_path/mingw-w64-headers"
   change_dir "$bld_path/mingw-w64-headers"
