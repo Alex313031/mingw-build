@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.2"
+SCRIPTVER="2.2.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -141,7 +141,7 @@ EOF
 }
 
 show_version() {
-  printf "\n %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
+  printf "\n ${bold} %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
   exit 0
 }
 
@@ -332,8 +332,13 @@ apply_patches() {
   # used GetSystemInfo).
   execute "" "Failed to apply libcxx-thread-getsysteminfo.patch" \
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
-  execute "" "Failed to apply llvm-support-pre-vista.patch" \
-      git apply --reject ../patches/llvm-support-pre-vista.patch
+  # Lets the Windows-hosted clang/lld/llvm-* LOAD on XP/2000. Gated < Win7
+  # (0x0601): the patch also defers Win7 processor-group APIs, so a Vista (0x0600)
+  # floor still needs it for the binary to load.
+  if (( WIN32_WINNT < 0x0601 )); then
+    execute "" "Failed to apply llvm-support-pre-vista.patch" \
+        git apply --reject ../patches/llvm-support-pre-vista.patch
+  fi
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
   execute "" "Failed to apply gendef-silent.patch" \
@@ -618,7 +623,15 @@ USE_AVX512=$avx512"
   # The wrappers no longer bake SIMD, so the autotools runtime builds (CRT,
   # winpthreads, gendef) must carry the arch baseline themselves -- same full
   # OPT+SIMD set the CMake runtime builds use.
+  # -DPSAPI_VERSION=1 makes psapi calls (EnumProcessModules, GetProcessMemoryInfo)
+  # link against psapi.dll instead of the Win7+ K32* kernel32 forwarders, so the
+  # LLVM tools load on XP/2000. Harmless for TUs that don't include <psapi.h>.
   TARGET_CFLAGS="$OPT_FLAGS $SIMD_FLAGS -pipe"
+  if (( WIN32_WINNT < 0x0601 )); then
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=1"
+  else
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=2"
+  fi
   TARGET_CXXFLAGS="$TARGET_CFLAGS"
   AUTOTOOLS_CFLAGS="$TARGET_CFLAGS"
   # HOST_CFLAGS build the host LLVM tools. In Phase 1 they run on Linux; in

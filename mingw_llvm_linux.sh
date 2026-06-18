@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.2"
+SCRIPTVER="2.2.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -126,7 +126,7 @@ EOF
 }
 
 show_version() {
-  printf "\n %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
+  printf "\n ${bold} %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
   exit 0
 }
 
@@ -318,9 +318,13 @@ apply_patches() {
   execute "" "Failed to apply libcxx-thread-getsysteminfo.patch" \
       git apply --reject ../patches/libcxx-thread-getsysteminfo.patch
   # Lets the Windows-hosted clang/lld/llvm-* LOAD on XP/2000 (inert here -- the
-  # Windows lib/Support/*.inc isn't compiled in a Linux-hosted build).
-  execute "" "Failed to apply llvm-support-pre-vista.patch" \
-      git apply --reject ../patches/llvm-support-pre-vista.patch
+  # Windows lib/Support/*.inc isn't compiled in a Linux-hosted build). Gated < Win7
+  # (0x0601): the patch also defers Win7 processor-group APIs, so a Vista (0x0600)
+  # floor still needs it for the binary to load.
+  if (( WIN32_WINNT < 0x0601 )); then
+    execute "" "Failed to apply llvm-support-pre-vista.patch" \
+        git apply --reject ../patches/llvm-support-pre-vista.patch
+  fi
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
   execute "" "Failed to apply gendef-silent.patch" \
@@ -602,6 +606,11 @@ USE_AVX512=$avx512"
   # winpthreads, gendef) must carry the arch baseline themselves -- same full
   # OPT+SIMD set the CMake runtime builds use.
   local TARGET_CFLAGS="$OPT_FLAGS $SIMD_FLAGS -pipe"
+  if (( WIN32_WINNT < 0x0601 )); then
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=1"
+  else
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=2"
+  fi
   local AUTOTOOLS_CFLAGS="$TARGET_CFLAGS"
   local TARGET_CXXFLAGS="$TARGET_CFLAGS"
 

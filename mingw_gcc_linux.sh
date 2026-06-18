@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.2"
+SCRIPTVER="2.2.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -118,7 +118,7 @@ EOF
 }
 
 show_version() {
-  printf "\n %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
+  printf "\n ${bold} %s Version %s \n\n" "$SCRIPTNAME" "$SCRIPTVER"
   exit 0
 }
 
@@ -527,6 +527,11 @@ USE_AVX2=$avx2
 USE_AVX512=$avx512"
   fi
   local TARGET_CFLAGS="$OPT_FLAGS $SIMD_FLAGS -pipe"
+  if (( WIN32_WINNT < 0x0601 )); then
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=1"
+  else
+    TARGET_CFLAGS+=" -DPSAPI_VERSION=2"
+  fi
   local TARGET_CXXFLAGS="$TARGET_CFLAGS"
 
   # HOST_CFLAGS are used to build tools that run on the build machine
