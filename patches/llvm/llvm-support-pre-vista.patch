@@ -1,16 +1,49 @@
-Makes the LLVM toolchain binaries (clang, lld, llvm-*) LOAD and run on
-Windows XP/2000. lib/Support's Windows code statically imports six Vista+/
-Win7+ functions (GetFinalPathNameByHandleW, SetFileInformationByHandle, and
-the processor-group APIs GetLogicalProcessorInformationEx /
-Get|Set ThreadGroupAffinity / GetProcessGroupAffinity); a static import of a
-missing function makes the whole .exe fail to start on pre-Vista. Resolve
-them dynamically via GetProcAddress (as LLVM already does for
-PrefetchVirtualMemory) and fall back: realPathFromHandle fails soft, rename
-uses MoveFileExW by path, and the processor-group code collapses to a single
-GetSystemInfo group with no thread-group affinity.
+Makes the LLVM toolchain binaries (clang, lld, llvm-*) LOAD and run on Windows
+XP/2000. lib/Support's Windows code statically imports functions that don't
+exist before Vista/Win7; a static import of a missing function makes the whole
+.exe fail to start. Each is resolved dynamically via GetProcAddress (as LLVM
+already does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
 
+  Path.inc:
+    - GetFinalPathNameByHandleW (Vista): realPathFromHandle fails soft.
+    - SetFileInformationByHandle (Vista): rename() uses MoveFileExW by path.
+    - SHGetKnownFolderPath (Vista): falls back to SHGetFolderPathW + CSIDL.
+    - SHCreateItemFromIDList (Vista): remove_directories falls back to the
+      classic SHFileOperationW.
+  Threading.inc:
+    - GetLogicalProcessorInformationEx / Get|SetThreadGroupAffinity /
+      GetProcessGroupAffinity (Win7): collapse to a single GetSystemInfo group.
+  Memory.inc:
+    - GetLargePageMinimum (Vista): returns 0 -> large pages stay disabled.
+
+The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
+separately by building with -DPSAPI_VERSION=1 (routes them to psapi.dll), not by
+this patch.
+
+diff --git a/llvm/lib/Support/Windows/Memory.inc b/llvm/lib/Support/Windows/Memory.inc
+index 93a32111e..9eb511a80 100644
+--- a/llvm/lib/Support/Windows/Memory.inc
++++ b/llvm/lib/Support/Windows/Memory.inc
+@@ -62,7 +62,16 @@ static size_t getAllocationGranularity() {
+ // sucessfull, we return the minimal large memory page size.
+ static size_t enableProcessLargePages() {
+   HANDLE Token = 0;
+-  size_t LargePageMin = GetLargePageMinimum();
++  // GetLargePageMinimum is Vista+; resolve it dynamically so the binary loads
++  // on Windows XP/2000. Absent -> 0 -> large pages stay disabled (the existing
++  // !Token fall-through below already handles 0).
++  size_t LargePageMin = 0;
++  if (HMODULE K = ::GetModuleHandleW(L"kernel32.dll")) {
++    using GetLargePageMinimum_t = SIZE_T(WINAPI *)();
++    if (auto Fn = reinterpret_cast<GetLargePageMinimum_t>(
++            ::GetProcAddress(K, "GetLargePageMinimum")))
++      LargePageMin = Fn();
++  }
+   if (LargePageMin)
+     OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                      &Token);
 diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
-index 97dd75a74..eab56c7de 100644
+index 97dd75a74..06eef0405 100644
 --- a/llvm/lib/Support/Windows/Path.inc
 +++ b/llvm/lib/Support/Windows/Path.inc
 @@ -448,18 +448,52 @@ std::error_code is_local(const Twine &path, bool &result) {
@@ -109,6 +142,94 @@ index 97dd75a74..eab56c7de 100644
    ScopedFileHandle FromHandle;
    // Retry this a few times to defeat badly behaved file system scanners.
    for (unsigned Retry = 0; Retry != 200; ++Retry) {
+@@ -1551,6 +1604,28 @@ std::error_code remove_directories(const Twine &path, bool IgnoreErrors) {
+   Path16.push_back(0);
+   Path16.push_back(0);
+ 
++  // IFileOperation + SHCreateItemFromIDList are Vista+. On older Windows fall
++  // back to the classic SHFileOperationW (NT4+), for which Path16 is already
++  // double-null-terminated above.
++  using SHCreateItemFromIDList_t =
++      HRESULT(WINAPI *)(PCIDLIST_ABSOLUTE, REFIID, void **);
++  static const auto pfnSHCreateItemFromIDList =
++      []() -> SHCreateItemFromIDList_t {
++    HMODULE H = ::GetModuleHandleW(L"shell32.dll");
++    return H ? reinterpret_cast<SHCreateItemFromIDList_t>(
++                   ::GetProcAddress(H, "SHCreateItemFromIDList"))
++             : nullptr;
++  }();
++  if (!pfnSHCreateItemFromIDList) {
++    SHFILEOPSTRUCTW Op = {};
++    Op.wFunc = FO_DELETE;
++    Op.pFrom = Path16.data();
++    Op.fFlags = FOF_NO_UI;
++    if (::SHFileOperationW(&Op) != 0 && !IgnoreErrors)
++      return mapWindowsError(ERROR_GEN_FAILURE);
++    return std::error_code();
++  }
++
+   HRESULT HR;
+   do {
+     HR =
+@@ -1570,7 +1645,7 @@ std::error_code remove_directories(const Twine &path, bool IgnoreErrors) {
+     PIDLIST_ABSOLUTE PIDL = ILCreateFromPathW(Path16.data());
+     llvm::scope_exit FreePIDL([&PIDL] { ILFree(PIDL); });
+     IShellItem *ShItem = NULL;
+-    HR = SHCreateItemFromIDList(PIDL, IID_PPV_ARGS(&ShItem));
++    HR = pfnSHCreateItemFromIDList(PIDL, IID_PPV_ARGS(&ShItem));
+     if (FAILED(HR))
+       break;
+     llvm::scope_exit ShItemRelease([&ShItem] { ShItem->Release(); });
+@@ -1652,12 +1727,46 @@ std::error_code real_path(const Twine &path, SmallVectorImpl<char> &dest,
+ namespace path {
+ static bool getKnownFolderPath(KNOWNFOLDERID folderId,
+                                SmallVectorImpl<char> &result) {
+-  wchar_t *path = nullptr;
+-  if (::SHGetKnownFolderPath(folderId, KF_FLAG_CREATE, nullptr, &path) != S_OK)
++  // SHGetKnownFolderPath is Vista+; resolve it dynamically so the binary loads
++  // on Windows XP/2000.
++  using SHGetKnownFolderPath_t =
++      HRESULT(WINAPI *)(REFKNOWNFOLDERID, DWORD, HANDLE, PWSTR *);
++  static const auto pfnSHGetKnownFolderPath = []() -> SHGetKnownFolderPath_t {
++    HMODULE H = ::GetModuleHandleW(L"shell32.dll");
++    return H ? reinterpret_cast<SHGetKnownFolderPath_t>(
++                   ::GetProcAddress(H, "SHGetKnownFolderPath"))
++             : nullptr;
++  }();
++
++  if (pfnSHGetKnownFolderPath) {
++    wchar_t *path = nullptr;
++    if (pfnSHGetKnownFolderPath(folderId, KF_FLAG_CREATE, nullptr, &path) !=
++        S_OK)
++      return false;
++
++    bool ok = !UTF16ToUTF8(path, ::wcslen(path), result);
++    ::CoTaskMemFree(path);
++    if (ok)
++      llvm::sys::path::make_preferred(result);
++    return ok;
++  }
++
++  // Pre-Vista fallback: map the few KNOWNFOLDERIDs we use to their CSIDL
++  // equivalents and use SHGetFolderPathW (available since Win2000/XP).
++  int csidl;
++  if (IsEqualGUID(folderId, FOLDERID_Profile))
++    csidl = CSIDL_PROFILE;
++  else if (IsEqualGUID(folderId, FOLDERID_LocalAppData))
++    csidl = CSIDL_LOCAL_APPDATA;
++  else
++    return false;
++
++  wchar_t path[MAX_PATH];
++  if (::SHGetFolderPathW(nullptr, csidl | CSIDL_FLAG_CREATE, nullptr,
++                         SHGFP_TYPE_CURRENT, path) != S_OK)
+     return false;
+ 
+   bool ok = !UTF16ToUTF8(path, ::wcslen(path), result);
+-  ::CoTaskMemFree(path);
+   if (ok)
+     llvm::sys::path::make_preferred(result);
+   return ok;
 diff --git a/llvm/lib/Support/Windows/Threading.inc b/llvm/lib/Support/Windows/Threading.inc
 index 86e46b99c..183c25e3b 100644
 --- a/llvm/lib/Support/Windows/Threading.inc
