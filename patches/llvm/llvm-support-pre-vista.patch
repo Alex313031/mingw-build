@@ -15,6 +15,11 @@ already does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
       GetProcessGroupAffinity (Win7): collapse to a single GetSystemInfo group.
   Memory.inc:
     - GetLargePageMinimum (Vista): returns 0 -> large pages stay disabled.
+  Signals.inc:
+    - RegGetValueW (Vista in advapi32, despite its "XP" docs -- it is NOT in
+      stock XP advapi32 and crashes there): reports not-found when absent, so the
+      WER LocalDumps lookups (a Vista+ feature) fall through to default crash
+      behavior.
 
 The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
 separately by building with -DPSAPI_VERSION=1 (routes them to psapi.dll), not by
@@ -230,6 +235,71 @@ index 97dd75a74..06eef0405 100644
    if (ok)
      llvm::sys::path::make_preferred(result);
    return ok;
+diff --git a/llvm/lib/Support/Windows/Signals.inc b/llvm/lib/Support/Windows/Signals.inc
+index eec112e5a..f400ae679 100644
+--- a/llvm/lib/Support/Windows/Signals.inc
++++ b/llvm/lib/Support/Windows/Signals.inc
+@@ -604,6 +604,27 @@ static HKEY FindWERKey(const llvm::Twine &RegistryLocation) {
+   return Key;
+ }
+ 
++// RegGetValueW lives in advapi32 only on Vista+ (despite its "XP" docs); a
++// static import makes the binary fail to load on XP/2000. Resolve it
++// dynamically and report "not found" when absent -- the WER LocalDumps keys it
++// reads don't exist before Vista anyway, so callers fall through to default
++// crash-dump behavior.
++static LSTATUS regGetValueW(HKEY Key, LPCWSTR SubKey, LPCWSTR Value,
++                            DWORD Flags, LPDWORD Type, PVOID Data,
++                            LPDWORD DataLen) {
++  using RegGetValueW_t = LSTATUS(WINAPI *)(HKEY, LPCWSTR, LPCWSTR, DWORD,
++                                           LPDWORD, PVOID, LPDWORD);
++  static const auto pfn = []() -> RegGetValueW_t {
++    HMODULE H = ::GetModuleHandleW(L"advapi32.dll");
++    return H ? reinterpret_cast<RegGetValueW_t>(
++                   ::GetProcAddress(H, "RegGetValueW"))
++             : nullptr;
++  }();
++  if (!pfn)
++    return ERROR_PROC_NOT_FOUND;
++  return pfn(Key, SubKey, Value, Flags, Type, Data, DataLen);
++}
++
+ /// Populate ResultDirectory with the value for "DumpFolder" for a given
+ /// Windows Registry key.
+ ///
+@@ -617,13 +638,13 @@ static bool GetDumpFolder(HKEY Key,
+ 
+   DWORD BufferLengthBytes = 0;
+ 
+-  if (ERROR_SUCCESS != ::RegGetValueW(Key, 0, L"DumpFolder", REG_EXPAND_SZ,
++  if (ERROR_SUCCESS != regGetValueW(Key, 0, L"DumpFolder", REG_EXPAND_SZ,
+                                       NULL, NULL, &BufferLengthBytes))
+     return false;
+ 
+   SmallVector<wchar_t, MAX_PATH> Buffer(BufferLengthBytes);
+ 
+-  if (ERROR_SUCCESS != ::RegGetValueW(Key, 0, L"DumpFolder", REG_EXPAND_SZ,
++  if (ERROR_SUCCESS != regGetValueW(Key, 0, L"DumpFolder", REG_EXPAND_SZ,
+                                       NULL, Buffer.data(), &BufferLengthBytes))
+     return false;
+ 
+@@ -664,14 +685,14 @@ static bool GetDumpType(HKEY Key, MINIDUMP_TYPE &ResultType) {
+ 
+   DWORD DumpType;
+   DWORD TypeSize = sizeof(DumpType);
+-  if (ERROR_SUCCESS != ::RegGetValueW(Key, NULL, L"DumpType", RRF_RT_REG_DWORD,
++  if (ERROR_SUCCESS != regGetValueW(Key, NULL, L"DumpType", RRF_RT_REG_DWORD,
+                                       NULL, &DumpType, &TypeSize))
+     return false;
+ 
+   switch (DumpType) {
+   case 0: {
+     DWORD Flags = 0;
+-    if (ERROR_SUCCESS != ::RegGetValueW(Key, NULL, L"CustomDumpFlags",
++    if (ERROR_SUCCESS != regGetValueW(Key, NULL, L"CustomDumpFlags",
+                                         RRF_RT_REG_DWORD, NULL, &Flags,
+                                         &TypeSize))
+       return false;
 diff --git a/llvm/lib/Support/Windows/Threading.inc b/llvm/lib/Support/Windows/Threading.inc
 index 86e46b99c..183c25e3b 100644
 --- a/llvm/lib/Support/Windows/Threading.inc
