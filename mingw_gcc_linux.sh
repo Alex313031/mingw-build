@@ -401,7 +401,9 @@ build() {
   fi
 
   if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
-    printf "${bold}Already applied patches.${c0}\n"
+    # Only report this on a genuine --cached-sources re-run; during a fresh
+    # multi-arch build the sentinel just carries between archs silently.
+    [ "$CACHED_SOURCES" ] && printf "${bold}Already applied patches.${c0}\n"
   else
     apply_patches || error_exit "Failed to apply patches"
   fi

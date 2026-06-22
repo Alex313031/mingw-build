@@ -409,18 +409,24 @@ build_toolchain() {
     error_exit "WIN32_WINNT should not be 0!"
   fi
 
-  if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
-    printf "${bold}Already applied patches.${c0}\n"
-  else
-    apply_patches || error_exit "Failed to apply patches"
-  fi
-
   log "${GRE}Starting build using $JOB_COUNT jobs.${c0}\n"
 
   local arch="$1"
   local prefix="$2"
   local windows_host="$3"
   shift 2
+
+  # Apply patches only during Phase 1 (the Linux-hosted pass). Phase 2 reuses the
+  # same already-patched source tree, so re-running this check there would just
+  # print a spurious "Already applied patches" on every stage-2 build. The notice
+  # itself is kept only for genuine --cached-sources re-runs.
+  if [ "$windows_host" != "windows" ]; then
+    if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
+      [ "$CACHED_SOURCES" ] && printf "${bold}Already applied patches.${c0}\n"
+    else
+      apply_patches || error_exit "Failed to apply patches"
+    fi
+  fi
 
   local bld_path="$BLD_PATH/$arch"
   local host="$arch-w64-mingw32"
