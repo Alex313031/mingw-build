@@ -3,7 +3,8 @@
 This is a collection of bash scripts to build a portable [MinGW-w64](https://mingw-w64.org) toolchain
 using either the [GCC](https://gcc.gnu.org/) or [LLVM](https://llvm.org/) compiler.
 It includes toolchains for i586 (Win32), i686 (Win32) and x86_64 (Win64).  
-It primarily targets legacy Windows like Windows NT 4.0, Windows 2000, and XP, since latest upstream MinGW targets Vista+.  
+It primarily targets legacy Windows like Windows NT 4.0, Windows 2000, and XP, since the latest upstream MinGW only targets Vista+.  
+The Windows-hosted builds also *run* on those old versions (down to 2000), not just produce binaries for them.  
 
 It currently contains four bash scripts, that can be run on Ubuntu or Debian:  
 
@@ -11,6 +12,8 @@ It currently contains four bash scripts, that can be run on Ubuntu or Debian:
 `mingw_gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.  
 `mingw_llvm_linux.sh`: Creates a MinGW/LLVM build that runs on Linux.  
 `mingw_llvm_win.sh`:   Creates a MinGW/LLVM build that runs on Windows.  
+
+The GCC toolchains also bundle [GDB](https://sourceware.org/gdb/) for source-level debugging (a cross-debugger in the Linux builds, `gdb.exe` in the Windows builds).  
 
 I use it with [GN-Legacy](https://github.com/Alex313031/gn-legacy#readme) on Linux to compile many of my Win32 projects, that I specifically code to be compatible with legacy Windows for fun.  
 
@@ -24,7 +27,7 @@ See the [./patches](./patches/README.md) subdirectory for more info.
 
 ## Default Branches
 * [MinGW-w64](https://mingw-w64.org) __14.x__ -> https://github.com/mingw-w64/mingw-w64/tree/v14.x
-* [Binutils](https://www.gnu.org/software/binutils/) __2.46__ -> https://github.com/RTEMS/sourceware-mirror-binutils-gdb/tree/binutils-2_46-branch
+* [Binutils](https://www.gnu.org/software/binutils/) + [GDB](https://sourceware.org/gdb/) __2.46__ -> https://github.com/RTEMS/sourceware-mirror-binutils-gdb/tree/binutils-2_46-branch
 * [GCC](https://gcc.gnu.org/) __16.x__ -> https://github.com/gcc-mirror/gcc/tree/releases/gcc-16
 * [LLVM](https://llvm.org/) __22.x__ -> https://github.com/llvm/llvm-project/tree/release/22.x
 
@@ -34,7 +37,7 @@ The i586 build targets Pentium and Windows NT 4.0. It lacks MMX and SSE instruct
 The i686 build targets Pentium III and Windows 2000 by default. It has SSE instructions by default.  
 The x86_64 (x64) build targets Windows Server 2003 by default. It has SSE2 instructions by default.  
 
- - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX and AVX2
+ - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX, AVX2, and (experimental) AVX-512
 
 ## Usage
 `mingw_*.sh` __&lt;arch&gt; [options]__
@@ -60,7 +63,7 @@ The host tools compile with SSE3 by default: Any reasonably modern OS/Machine sh
 It uses `config.guess` in [./assets](./assets/config.guess) to auto-configure for your platform.
 
 ### Default Prefix
-Run --help to see the current install prefix for a given script.  
+Run a script with `--help` to see the current install prefix for a given script.  
 
 It does not need to be "installed", the prefix simply chooses where to put built files: the toolchain is fully portable.  
 One can run --package, and simply copy the .zip somewhere, and unpack it.

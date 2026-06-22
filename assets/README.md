@@ -18,25 +18,22 @@ And [clang-target-wrapper.c](./src/clang-target-wrapper.c) - LLVM toolchain entr
 
 We also have the lovely classic Windows logos/banners:
 
-__Windows NT 4.0__
+<table>
+  <tr>
+    <td align="center" valign="middle"><img src="./WinNT4Workstation_Logo.svg" height="80"></td>
+    <td align="center" valign="middle"><img src="./Win2000_Logo.svg" height="80"></td>
+    <td align="center" valign="middle"><img src="./WinXP_Logo.svg" height="80"></td>
+    <td align="center" valign="middle"><img src="./WinVista_Orb.svg" height="88"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Windows NT 4.0</b></td>
+    <td align="center"><b>Windows 2000</b></td>
+    <td align="center"><b>Windows XP</b></td>
+    <td align="center"><b>Windows Vista</b></td>
+  </tr>
+</table>
 
-<img src="./WinNT4Workstation_Logo.svg" height="128">
-
-__Windows 2000__
-
-<img src="./Win2000_Logo.svg" height="128">
-
-__Windows XP__
-
-<img src="./WinXP_Logo.svg" height="128">
-
-__Windows Vista Orb__
-
-<img src="./WinVista_Orb.svg" height="128">
-
-<!--
-__Windows 7 Orb__
-
-<img src="./Win7_Orb.svg" height="128">
-
+<!-- Windows 7 orb — uncomment the two cells to add it as a fifth column:
+    <td align="center" valign="middle"><img src="./Win7_Orb.svg" height="88"></td>
+    <td align="center"><b>Windows 7</b></td>
 -->
