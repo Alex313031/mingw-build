@@ -333,22 +333,22 @@ apply_patches() {
       git apply --reject ../patches/llvm-coff-fixes.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
-  execute "" "Failed to apply gendef-silent.patch" \
-      git apply --reject ../patches/gendef-silent.patch
+  execute "" "Failed to apply mingw-gendef-silent.patch" \
+      git apply --reject ../patches/mingw-gendef-silent.patch
   if (( WIN32_WINNT < 0x0501 )); then
-    execute "" "Failed to apply rand_s-win2k.patch" \
-        git apply --reject ../patches/rand_s-win2k.patch
+    execute "" "Failed to apply mingw-rand_s-win2k.patch" \
+        git apply --reject ../patches/mingw-rand_s-win2k.patch
   fi
   # GetSystemTimeAsFileTime is Windows 2000+, so the stock gettimeofday.c's
   # static reference to it makes any program using gettimeofday fail to load on
   # NT 4.0. Resolve it dynamically with a GetSystemTime + SystemTimeToFileTime
   # emulation fallback (both present on every NT release). Only NT4 needs it.
   if (( WIN32_WINNT < 0x0500 )); then
-    execute "" "Failed to apply gettimeofday.patch" \
-        git apply --reject ../patches/gettimeofday.patch
+    execute "" "Failed to apply mingw-gettimeofday.patch" \
+        git apply --reject ../patches/mingw-gettimeofday.patch
   fi
-  execute "" "Failed to apply MinGW headers.patch" \
-      git apply --reject ../patches/headers.patch
+  execute "" "Failed to apply mingw-headers.patch" \
+      git apply --reject ../patches/mingw-headers.patch
   execute "" "Unable to mark patches as applied" \
       touch "$SRC_PATH/patches/applied_patches"
   printf "${GRE}Done patching sources!${c0}\n"

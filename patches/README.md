@@ -8,20 +8,20 @@ Windows NT 4.0 (1996), 2000 (2000), XP(2001), and CPUs down to the original Pent
 
 The LLVM patches were taken and modified from [this repo](https://github.com/mon/llvm-mingw-xp).  
 Some of the MinGW/GCC patches were taken and modified from [w64devkit](https://github.com/skeeto/w64devkit/tree/master).  
-A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's rand_s used in std::random.
+A notable exception is the mingw-rand_s-win2k.patch, which I made myself for MinGW's rand_s used in std::random.
 
 ## List of patches and their purpose
 
 ### MinGW
 
-[gendef-silent.patch](./mingw/gendef-silent.patch) - Makes `gendef` silent: drops the `Found PE...` progress lines it prints to the console, and the copyright/comment header it writes at the top of your *.def* files.
+[mingw-gendef-silent.patch](./mingw/mingw-gendef-silent.patch) - Makes `gendef` silent: drops the `Found PE...` progress lines it prints to the console, and the copyright/comment header it writes at the top of your *.def* files.
 
-[headers.patch](./mingw/headers.patch) - Modifies some WinSDK version header files to default to a lower sane target.
+[mingw-headers.patch](./mingw/mingw-headers.patch) - Modifies some WinSDK version header files to default to a lower sane target.
 
-[rand_s-win2k.patch](./mingw/rand_s-win2k.patch) - Fixes MinGW CRT `rand_s` incompatibility with Windows NT 4.0/2000, by using [`CryptGenRandom`](https://en.wikipedia.org/wiki/CryptGenRandom) instead of
+[mingw-rand_s-win2k.patch](./mingw/mingw-rand_s-win2k.patch) - Fixes MinGW CRT `rand_s` incompatibility with Windows NT 4.0/2000, by using [`CryptGenRandom`](https://en.wikipedia.org/wiki/CryptGenRandom) instead of
                                                    XP+ [`RtlGenRandom`](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-rtlgenrandom) for cryptographically secure random number generation.
 
-[gettimeofday.patch](./mingw/gettimeofday.patch) - Fixes MinGW CRT `gettimeofday`/`getntptimeofday` on Windows NT 4.0. The stock code holds a *static* reference to
+[mingw-gettimeofday.patch](./mingw/mingw-gettimeofday.patch) - Fixes MinGW CRT `gettimeofday`/`getntptimeofday` on Windows NT 4.0. The stock code holds a *static* reference to
                                                   [`GetSystemTimeAsFileTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtimeasfiletime) (Windows 2000+), so any program that pulls in `gettimeofday` fails to load on NT 4.0. This
                                                   resolves it dynamically (via `GetProcAddress`) and falls back to a [`GetSystemTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) + [`SystemTimeToFileTime`](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-systemtimetofiletime)
                                                   emulation (both present on every NT release). Applied only for NT4 targets (`_WIN32_WINNT < 0x0500`).
