@@ -55,3 +55,15 @@ index 62e9182..8226ea5 100644
  #define _WIN32_IE_MAXVER      0x0A00
  #define _WIN32_WINNT_MAXVER   0x0A00
  #define WINVER_MAXVER         0x0A00
+diff --git a/mingw-w64-headers/include/winver.h b/mingw-w64-headers/include/winver.h
+index 2059cef..e6bf8f0 100644
+--- a/mingw-w64-headers/include/winver.h
++++ b/mingw-w64-headers/include/winver.h
+@@ -22,6 +22,7 @@ extern "C" {
+ #define VS_FFI_STRUCVERSION __MSABI_LONG(0x00010000)
+ #define VS_FFI_FILEFLAGSMASK __MSABI_LONG(0x0000003F)
+ 
++#define VS_FF_RELEASE __MSABI_LONG(0x00000000)
+ #define VS_FF_DEBUG __MSABI_LONG(0x00000001)
+ #define VS_FF_PRERELEASE __MSABI_LONG(0x00000002)
+ #define VS_FF_PATCHED __MSABI_LONG(0x00000004)

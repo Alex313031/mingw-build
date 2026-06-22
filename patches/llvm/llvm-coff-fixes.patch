@@ -1,0 +1,72 @@
+diff --git a/lld/COFF/Config.h b/lld/COFF/Config.h
+index 33a3bc6aa..d75e3a447 100644
+--- a/lld/COFF/Config.h
++++ b/lld/COFF/Config.h
+@@ -111,6 +111,39 @@ enum class BuildIDHash {
+   Binary,
+ };
+ 
++#if _WIN32_WINNT >= 0x0A00
++ #define COFF_SUBSYS_MAJOR 10
++ #define COFF_SUBSYS_MINOR 0
++#elif _WIN32_WINNT >= 0x0603 && _WIN32_WINNT < 0x0A00
++ #define COFF_SUBSYS_MAJOR 6
++ #define COFF_SUBSYS_MINOR 3
++#elif _WIN32_WINNT >= 0x0602 && _WIN32_WINNT < 0x0603
++ #define COFF_SUBSYS_MAJOR 6
++ #define COFF_SUBSYS_MINOR 2
++#elif _WIN32_WINNT >= 0x0601 && _WIN32_WINNT < 0x0602
++ #define COFF_SUBSYS_MAJOR 6
++ #define COFF_SUBSYS_MINOR 1
++#elif _WIN32_WINNT >= 0x0600 && _WIN32_WINNT < 0x0601
++ #define COFF_SUBSYS_MAJOR 6
++ #define COFF_SUBSYS_MINOR 0
++#elif _WIN32_WINNT >= 0x0502 && _WIN32_WINNT < 0x0600
++ #define COFF_SUBSYS_MAJOR 5
++ #define COFF_SUBSYS_MINOR 2
++#elif _WIN32_WINNT >= 0x0501 && _WIN32_WINNT < 0x0502
++ #define COFF_SUBSYS_MAJOR 5
++ #define COFF_SUBSYS_MINOR 1
++#elif _WIN32_WINNT >= 0x0500 && _WIN32_WINNT < 0x0501
++ #define COFF_SUBSYS_MAJOR 5
++ #define COFF_SUBSYS_MINOR 0
++#elif _WIN32_WINNT >= 0x0400 && _WIN32_WINNT < 0x0500
++ #define COFF_SUBSYS_MAJOR 4
++ #define COFF_SUBSYS_MINOR 0
++#else
++ // Default to XP if _WIN32_WINNT not set
++ #define COFF_SUBSYS_MAJOR 5
++ #define COFF_SUBSYS_MINOR 1
++#endif
++
+ // Global configuration.
+ struct Configuration {
+   enum ManifestKind { Default, SideBySide, Embed, No };
+@@ -308,10 +341,10 @@ struct Configuration {
+   uint32_t minorImageVersion = 0;
+   // If changing the default os/subsys version here, update the default in
+   // the MinGW driver accordingly.
+-  uint32_t majorOSVersion = 6;
+-  uint32_t minorOSVersion = 0;
+-  uint32_t majorSubsystemVersion = 6;
+-  uint32_t minorSubsystemVersion = 0;
++  uint32_t majorOSVersion = COFF_SUBSYS_MAJOR;
++  uint32_t minorOSVersion = COFF_SUBSYS_MINOR;
++  uint32_t majorSubsystemVersion = COFF_SUBSYS_MAJOR;
++  uint32_t minorSubsystemVersion = COFF_SUBSYS_MINOR;
+   uint32_t timestamp = 0;
+   uint32_t functionPadMin = 0;
+   uint32_t timeTraceGranularity = 0;
+diff --git a/llvm/lib/Object/COFFModuleDefinition.cpp b/llvm/lib/Object/COFFModuleDefinition.cpp
+index 67b0dc4fa..f722191da 100644
+--- a/llvm/lib/Object/COFFModuleDefinition.cpp
++++ b/llvm/lib/Object/COFFModuleDefinition.cpp
+@@ -164,7 +164,7 @@ private:
+ 
+   Error readAsInt(uint64_t *I) {
+     read();
+-    if (Tok.K != Identifier || Tok.Value.getAsInteger(10, *I))
++    if (Tok.K != Identifier || Tok.Value.getAsInteger(0, *I))
+       return createError("integer expected");
+     return Error::success();
+   }
