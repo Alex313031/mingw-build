@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.3"
+SCRIPTVER="2.2.4"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -572,7 +572,7 @@ USE_AVX512=$avx512"
   # HOST_CFLAGS are used to build the toolchain tools themselves (binutils, the
   # gcc driver, gendef) -- which run on the build machine in Phase 1 and on the
   # Windows host in Phase 2.
-  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe"
+  local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe -D_WIN32_WINNT=$WIN32_WINNT"
   local HOST_CXXFLAGS="$HOST_CFLAGS"
   local HOST_LDFLAGS="$HOST_STATIC $STRIP_FLAG"
 
@@ -596,6 +596,7 @@ USE_AVX512=$avx512"
   log "${CYA}HOST_LDFLAGS   = ${bold}$HOST_LDFLAGS ${c0}\n"
   log "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
   log "${CYA}TARGET_LDFLAGS = ${bold}$TARGET_LDFLAGS ${c0}\n"
+  log "${CYA}TRIPLE         = ${bold}$host ${c0}\n"
   log "${CYA}_WIN32_WINNT   = ${bold}${_WIN32_WINNT} ${c0}\n"
   sleep 1
 
