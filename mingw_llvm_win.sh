@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.4"
+SCRIPTVER="2.2.5"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -352,6 +352,14 @@ apply_patches() {
   if (( WIN32_WINNT < 0x0501 )); then
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
+  fi
+  # GetSystemTimeAsFileTime is Windows 2000+, so the stock gettimeofday.c's
+  # static reference to it makes any program using gettimeofday fail to load on
+  # NT 4.0. Resolve it dynamically with a GetSystemTime + SystemTimeToFileTime
+  # emulation fallback (both present on every NT release). Only NT4 needs it.
+  if (( WIN32_WINNT < 0x0500 )); then
+    execute "" "Failed to apply gettimeofday.patch" \
+        git apply --reject ../patches/gettimeofday.patch
   fi
   execute "" "Failed to apply MinGW headers.patch" \
       git apply --reject ../patches/headers.patch

@@ -21,6 +21,11 @@ A notable exception is the rand_s-win2k.patch, which I made myself for MinGW's r
 [rand_s-win2k.patch](./mingw/rand_s-win2k.patch) - Fixes MinGW CRT `rand_s` incompatibility with Windows NT 4.0/2000, by using [`CryptGenRandom`](https://en.wikipedia.org/wiki/CryptGenRandom) instead of
                                                    XP+ [`RtlGenRandom`](https://learn.microsoft.com/en-us/windows/win32/api/ntsecapi/nf-ntsecapi-rtlgenrandom) for cryptographically secure random number generation.
 
+[gettimeofday.patch](./mingw/gettimeofday.patch) - Fixes MinGW CRT `gettimeofday`/`getntptimeofday` on Windows NT 4.0. The stock code holds a *static* reference to
+                                                  [`GetSystemTimeAsFileTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtimeasfiletime) (Windows 2000+), so any program that pulls in `gettimeofday` fails to load on NT 4.0. This
+                                                  resolves it dynamically (via `GetProcAddress`) and falls back to a [`GetSystemTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) + [`SystemTimeToFileTime`](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-systemtimetofiletime)
+                                                  emulation (both present on every NT release). Applied only for NT4 targets (`_WIN32_WINNT < 0x0500`).
+
 [sdkddkver.h](./mingw/sdkddkver.h) and [winsdkver.h](./mingw/winsdkver.h) - Custom written replacements for these MSVC's headers, with expanded macros and definitions for old Windows.
 
 ### GCC

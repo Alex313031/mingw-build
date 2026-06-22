@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.4"
+SCRIPTVER="2.2.5"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -302,6 +302,14 @@ apply_patches() {
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
   fi
+  # GetSystemTimeAsFileTime is Windows 2000+, so the stock gettimeofday.c's
+  # static reference to it makes any program using gettimeofday fail to load on
+  # NT 4.0. Resolve it dynamically with a GetSystemTime + SystemTimeToFileTime
+  # emulation fallback (both present on every NT release). Only NT4 needs it.
+  if (( WIN32_WINNT < 0x0500 )); then
+    execute "" "Failed to apply gettimeofday.patch" \
+        git apply --reject ../patches/gettimeofday.patch
+  fi
   execute "" "Failed to apply MinGW headers.patch" \
       git apply --reject ../patches/headers.patch
   execute "" "Unable to mark patches as applied" \
@@ -566,16 +574,29 @@ USE_AVX512=$avx512"
   create_dir "$bld_path/binutils" &&
   change_dir "$bld_path/binutils" &&
 
-  execute "($arch): Configuring Binutils" "" \
+  # binutils + a cross GDB (e.g. i686-w64-mingw32-gdb) from the unified
+  # binutils-gdb tree. GDB requires GMP, which is already provided in-tree via
+  # the gmp/mpfr symlinks (download_gcc_deps). This builds a Linux-hosted
+  # cross-debugger; the Windows-hosted GDB is handled in mingw_gcc_win.sh.
+  #   --without-python    : no host libpython runtime coupling (no
+  #                         pretty-printers for now) -- keeps the toolchain
+  #                         portable.
+  #   --disable-gdbserver : a host (Linux) gdbserver is useless for debugging
+  #                         Windows targets.
+  #   --disable-werror    : GDB does not compile cleanly under modern GCC.
+  # expat (XML target descriptions) and ncurses (readline/TUI) are picked up
+  # from the host if present (see install_deps); GDB degrades gracefully without.
+  execute "($arch): Configuring Binutils + GDB" "" \
       "$SRC_PATH/binutils/configure" --prefix="$prefix" --disable-shared \
       --enable-static --with-sysroot="$prefix" --target="$host" \
-      --disable-multilib --disable-nls --enable-lto --disable-gdb \
+      --disable-multilib --disable-nls --enable-lto \
+      --enable-gdb --disable-gdbserver --without-python --disable-werror \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
-  execute "($arch): Building Binutils" "" \
+  execute "($arch): Building Binutils + GDB" "" \
       make -j $JOB_COUNT $VFLAGS
 
-  execute "($arch): Installing Binutils" "" \
+  execute "($arch): Installing Binutils + GDB" "" \
       make install $VFLAGS
 
   # --disable-shared builds binutils' "libdep" plugin (lets a static .a declare
@@ -722,10 +743,13 @@ install_deps() {
 
   printf "${GRE}Installing dependencies for $SCRIPTNAME...${c0}\n"
   # build-essential: gcc, g++, make. The rest provide the remaining tools the
-  # missing-executable check requires, plus zip for --package.
+  # missing-executable check requires, plus zip for --package. libexpat1-dev and
+  # libncurses-dev give the cross GDB its XML target-description and
+  # readline/TUI support (GDB still builds without them, just degraded).
   $sudo apt-get update || error_exit "apt-get update failed"
   $sudo apt-get install -y \
       build-essential flex bison texinfo m4 bzip2 git curl zip autoconf diffutils \
+      libexpat1-dev libncurses-dev \
       || error_exit "Failed to install dependencies"
   printf "${GRE}Done installing dependencies!${c0}\n"
 }

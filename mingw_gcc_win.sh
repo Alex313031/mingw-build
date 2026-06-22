@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.4"
+SCRIPTVER="2.2.5"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -302,6 +302,14 @@ apply_patches() {
     execute "" "Failed to apply rand_s-win2k.patch" \
         git apply --reject ../patches/rand_s-win2k.patch
   fi
+  # GetSystemTimeAsFileTime is Windows 2000+, so the stock gettimeofday.c's
+  # static reference to it makes any program using gettimeofday fail to load on
+  # NT 4.0. Resolve it dynamically with a GetSystemTime + SystemTimeToFileTime
+  # emulation fallback (both present on every NT release). Only NT4 needs it.
+  if (( WIN32_WINNT < 0x0500 )); then
+    execute "" "Failed to apply gettimeofday.patch" \
+        git apply --reject ../patches/gettimeofday.patch
+  fi
   execute "" "Failed to apply MinGW headers.patch" \
       git apply --reject ../patches/headers.patch
   execute "" "Unable to mark patches as applied" \
@@ -422,11 +430,23 @@ build_toolchain() {
   # host binaries that run on Windows; GENDEF_HOST does the same for gendef
   # (which already passes its own --build); EXE_EXT names the resulting tools.
   local CROSS_FLAGS="" GENDEF_HOST="" EXE_EXT="" host_label="Linux-hosted"
+  # GDB is built only in the Windows-hosted (deliverable) pass -- a throwaway
+  # Phase-1 gdb would just cost build time, and the Linux-hosted cross GDB is
+  # produced by mingw_gcc_linux.sh instead. Windows-specific knobs:
+  #   --disable-tui    : the TUI needs a curses lib mingw doesn't ship.
+  #   --without-expat  : XML target descriptions need a static, XP-safe expat
+  #                      cross-built for the target (deferred -- same pattern as
+  #                      the LLVM libxml2 case); GDB still works without it.
+  #   --without-python / --disable-gdbserver / --disable-werror : as in the
+  #                      Linux script. GMP (gdb's hard requirement) builds
+  #                      in-tree for the target host via the gmp/mpfr symlinks.
+  local GDB_FLAGS="--disable-gdb"
   if [ "$windows_host" = "windows" ]; then
     CROSS_FLAGS="--build=$BUILD --host=$host"
     GENDEF_HOST="--host=$host"
     EXE_EXT=".exe"
     host_label="Windows-hosted"
+    GDB_FLAGS="--enable-gdb --disable-gdbserver --disable-tui --without-python --without-expat --disable-werror"
   fi
 
   # The Linux-hosted build puts its own bin/ on PATH so the freshly built
@@ -614,7 +634,7 @@ USE_AVX512=$avx512"
       "$SRC_PATH/binutils/configure" --prefix="$prefix" --disable-shared \
       --enable-static --with-sysroot="$prefix" --target="$host" \
       --program-prefix="$host-" \
-      --disable-multilib --disable-nls --enable-lto --disable-gdb $CROSS_FLAGS \
+      --disable-multilib --disable-nls --enable-lto $GDB_FLAGS $CROSS_FLAGS \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
   execute "($arch): Building Binutils" "" \
