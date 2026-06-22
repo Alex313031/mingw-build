@@ -1,29 +1,29 @@
 Makes the LLVM toolchain binaries (clang, lld, llvm-*) LOAD and run on Windows
-XP/2000. lib/Support's Windows code statically imports functions that don't
-exist before Vista/Win7; a static import of a missing function makes the whole
-.exe fail to start. Each is resolved dynamically via GetProcAddress (as LLVM
-already does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
+XP/2000. lib/Support's Windows code (and a couple of tools) statically import
+functions that don't exist before Vista/Win7; a static import of a missing
+function makes the whole .exe fail to start. Each is resolved dynamically via
+GetProcAddress (as LLVM already does for PrefetchVirtualMemory /
+SetThreadInformation), with a fallback:
 
   Path.inc:
     - GetFinalPathNameByHandleW (Vista): realPathFromHandle fails soft.
     - SetFileInformationByHandle (Vista): rename() uses MoveFileExW by path.
     - SHGetKnownFolderPath (Vista): falls back to SHGetFolderPathW + CSIDL.
-    - SHCreateItemFromIDList (Vista): remove_directories falls back to the
-      classic SHFileOperationW.
+    - SHCreateItemFromIDList (Vista): remove_directories -> SHFileOperationW.
   Threading.inc:
     - GetLogicalProcessorInformationEx / Get|SetThreadGroupAffinity /
       GetProcessGroupAffinity (Win7): collapse to a single GetSystemInfo group.
   Memory.inc:
     - GetLargePageMinimum (Vista): returns 0 -> large pages stay disabled.
   Signals.inc:
-    - RegGetValueW (Vista in advapi32, despite its "XP" docs -- it is NOT in
-      stock XP advapi32 and crashes there): reports not-found when absent, so the
-      WER LocalDumps lookups (a Vista+ feature) fall through to default crash
-      behavior.
+    - RegGetValueW (Vista in advapi32, despite "XP" docs): reports not-found so
+      the WER LocalDumps lookups fall through to default crash behavior.
+  tools/llvm-ar/llvm-ar.cpp (also llvm-lib / llvm-ranlib / llvm-dlltool):
+    - CompareStringOrdinal (Vista): comparePaths falls back to an ASCII
+      case-insensitive ordinal compare.
 
 The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
-separately by building with -DPSAPI_VERSION=1 (routes them to psapi.dll), not by
-this patch.
+separately by building with -DPSAPI_VERSION=1, not by this patch.
 
 diff --git a/llvm/lib/Support/Windows/Memory.inc b/llvm/lib/Support/Windows/Memory.inc
 index 93a32111e..9eb511a80 100644
@@ -440,3 +440,39 @@ index 86e46b99c..183c25e3b 100644
  
    static unsigned All =
        aggregate(getProcessorGroups(),
+diff --git a/llvm/tools/llvm-ar/llvm-ar.cpp b/llvm/tools/llvm-ar/llvm-ar.cpp
+index 320a903b5..160155fcf 100644
+--- a/llvm/tools/llvm-ar/llvm-ar.cpp
++++ b/llvm/tools/llvm-ar/llvm-ar.cpp
+@@ -567,8 +567,29 @@ static bool comparePaths(StringRef Path1, StringRef Path2) {
+   failIfError(sys::windows::UTF8ToUTF16(normalizePath(Path1), WPath1));
+   failIfError(sys::windows::UTF8ToUTF16(normalizePath(Path2), WPath2));
+ 
+-  return CompareStringOrdinal(WPath1.data(), WPath1.size(), WPath2.data(),
+-                              WPath2.size(), true) == CSTR_EQUAL;
++  // CompareStringOrdinal is Vista+; resolve it dynamically so llvm-ar / -lib /
++  // -ranlib / -dlltool load on Windows XP/2000. When absent, fall back to an
++  // ASCII case-insensitive ordinal compare (archive member paths are ASCII in
++  // practice; this matches CompareStringOrdinal for that case).
++  using CompareStringOrdinal_t = int(WINAPI *)(LPCWCH, int, LPCWCH, int, BOOL);
++  static const auto pfnCompareStringOrdinal =
++      reinterpret_cast<CompareStringOrdinal_t>(::GetProcAddress(
++          ::GetModuleHandleW(L"kernel32.dll"), "CompareStringOrdinal"));
++  if (pfnCompareStringOrdinal)
++    return pfnCompareStringOrdinal(WPath1.data(), WPath1.size(), WPath2.data(),
++                                   WPath2.size(), TRUE) == CSTR_EQUAL;
++  if (WPath1.size() != WPath2.size())
++    return false;
++  for (size_t I = 0, E = WPath1.size(); I != E; ++I) {
++    wchar_t C1 = WPath1[I], C2 = WPath2[I];
++    if (C1 >= L'a' && C1 <= L'z')
++      C1 -= L'a' - L'A';
++    if (C2 >= L'a' && C2 <= L'z')
++      C2 -= L'a' - L'A';
++    if (C1 != C2)
++      return false;
++  }
++  return true;
+ #else
+   return normalizePath(Path1) == normalizePath(Path2);
+ #endif
