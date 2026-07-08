@@ -1,3 +1,9 @@
+compiler-rt's emutls.c calls InitOnceExecuteOnce(), a Vista+ API, to initialize
+emulated thread-local storage. Replace it with an InterlockedCompareExchange
+one-time init that works on every NT release. Self-guarding (#if _WIN32_WINNT >=
+0x0600) so it is a no-op on modern targets and only takes effect for NT 4.0/2000/
+XP builds.
+
 diff --git a/compiler-rt/lib/builtins/emutls.c b/compiler-rt/lib/builtins/emutls.c
 index 390ffb25f..76f169f9f 100644
 --- a/compiler-rt/lib/builtins/emutls.c

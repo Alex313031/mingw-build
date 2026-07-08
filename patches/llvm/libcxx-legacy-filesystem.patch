@@ -1,3 +1,9 @@
+libc++'s std::filesystem relies on Vista+ file APIs (GetFileInformationByHandleEx,
+SetFileInformationByHandle, CreateSymbolicLinkW, GetFinalPathNameByHandleW). Add
+NT 4.0/2000/XP fallbacks built on GetFileInformationByHandle + DeviceIoControl;
+symlink creation, canonical() and permissions() degrade to "not supported" on
+those targets. Self-guarding on _WIN32_WINNT < 0x0600, a no-op on Vista+.
+
 diff --git a/libcxx/src/filesystem/posix_compat.h b/libcxx/src/filesystem/posix_compat.h
 index ddd99d8aa..65a2e6b15 100644
 --- a/libcxx/src/filesystem/posix_compat.h

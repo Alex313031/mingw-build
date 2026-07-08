@@ -1,3 +1,7 @@
+libc++ calls the bounds-checked wcrtomb_s(), which exists only in msvcr80+/UCRT
+and not in the legacy msvcrt.dll. Supply a local shim built on the always-present
+wcrtomb(). Self-guarding, a no-op on UCRT builds.
+
 diff --git a/libcxx/src/support/win32/support.cpp b/libcxx/src/support/win32/support.cpp
 index 7ac508301..ba80ac304 100644
 --- a/libcxx/src/support/win32/support.cpp

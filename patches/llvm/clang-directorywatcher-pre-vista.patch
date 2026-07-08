@@ -1,0 +1,56 @@
+clang's DirectoryWatcher (clang/lib/DirectoryWatcher, compiled into the shared
+libclang-cpp.dll) statically imports GetFinalPathNameByHandleW, a Vista+ API. A
+static import of a function the OS lacks blocks the whole DLL from loading, so on
+Windows XP/2000 this would take clang.exe (which links libclang-cpp) down with
+it. lib/Support's own copy of this call is already resolved dynamically by
+llvm-support-pre-vista.patch, but this clang call site is separate. Resolve it via
+GetProcAddress and skip path canonicalization when absent (the watcher still runs
+via ReadDirectoryChangesW). Self-guarding on _WIN32_WINNT < 0x0600, so it is a
+no-op on Vista+ targets. Only the Windows host compiles this file; a Linux host
+builds DirectoryWatcher-linux.cpp instead.
+
+diff --git a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
+index 110d40243..038427101 100644
+--- a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
++++ b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
+@@ -87,16 +87,31 @@ DirectoryWatcherWindows::DirectoryWatcherWindows(
+   // Pre-compute the real location as we will be handing over the directory
+   // handle to the watcher and performing synchronous operations.
+   {
+-    DWORD Size = GetFinalPathNameByHandleW(DirectoryHandle, NULL, 0, 0);
+-    std::unique_ptr<WCHAR[]> Buffer{new WCHAR[Size + 1]};
+-    Size = GetFinalPathNameByHandleW(DirectoryHandle, Buffer.get(), Size, 0);
+-    Buffer[Size] = L'\0';
+-    WCHAR *Data = Buffer.get();
+-    if (Size >= 4 && ::memcmp(Data, L"\\\\?\\", 8) == 0) {
+-      Data += 4;
+-      Size -= 4;
++#if defined(_WIN32_WINNT) && (_WIN32_WINNT < 0x0600)
++    // GetFinalPathNameByHandleW is Vista+; resolve it dynamically so that
++    // libclang-cpp.dll still LOADs on Windows XP/2000, where a static import
++    // would block process startup. When absent, skip canonicalization: the
++    // watcher still runs via ReadDirectoryChangesW, only Path stays unresolved.
++    using GetFinalPathNameByHandleW_t =
++        DWORD(WINAPI *)(HANDLE, LPWSTR, DWORD, DWORD);
++    GetFinalPathNameByHandleW_t GetFinalPathNameByHandleW = nullptr;
++    if (HMODULE K = ::GetModuleHandleW(L"kernel32.dll"))
++      GetFinalPathNameByHandleW = (GetFinalPathNameByHandleW_t)::GetProcAddress(
++          K, "GetFinalPathNameByHandleW");
++    if (GetFinalPathNameByHandleW)
++#endif
++    {
++      DWORD Size = GetFinalPathNameByHandleW(DirectoryHandle, NULL, 0, 0);
++      std::unique_ptr<WCHAR[]> Buffer{new WCHAR[Size + 1]};
++      Size = GetFinalPathNameByHandleW(DirectoryHandle, Buffer.get(), Size, 0);
++      Buffer[Size] = L'\0';
++      WCHAR *Data = Buffer.get();
++      if (Size >= 4 && ::memcmp(Data, L"\\\\?\\", 8) == 0) {
++        Data += 4;
++        Size -= 4;
++      }
++      llvm::sys::windows::UTF16ToUTF8(Data, Size, Path);
+     }
+-    llvm::sys::windows::UTF16ToUTF8(Data, Size, Path);
+   }
+ 
+   size_t EntrySize = sizeof(FILE_NOTIFY_INFORMATION) + MAX_PATH * sizeof(WCHAR);

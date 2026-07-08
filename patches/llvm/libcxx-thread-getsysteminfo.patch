@@ -1,3 +1,7 @@
+libc++'s std::thread::hardware_concurrency() uses GetActiveProcessorCount, a
+Windows 7+ API. Fall back to GetSystemInfo() on NT 4.0/2000/XP. Self-guarding on
+_WIN32_WINNT < 0x0601. Needed on LLVM 22.x; 20.x already used GetSystemInfo.
+
 diff --git a/libcxx/src/thread.cpp b/libcxx/src/thread.cpp
 index e494574..cc6885f 100644
 --- a/libcxx/src/thread.cpp

@@ -1,3 +1,12 @@
+Bakes the output PE's default OS/subsystem version into lld at build time instead
+of stamping it through the toolchain wrappers. lld normally defaults to 6.0
+(Vista), so its output refuses to load on older Windows; this patches
+lld/COFF/Config.h with a #if _WIN32_WINNT ladder so the default tracks the
+_WIN32_WINNT value lld is compiled with (the LLVM scripts pass -D_WIN32_WINNT,
+giving i586=4.0 / i686=5.0 / x86_64=5.2). Also makes COFFModuleDefinition parse
+.def version fields in any base, so hex 0x... works. Applied ungated -- the ladder
+is correct for any target.
+
 diff --git a/lld/COFF/Config.h b/lld/COFF/Config.h
 index 33a3bc6aa..d75e3a447 100644
 --- a/lld/COFF/Config.h

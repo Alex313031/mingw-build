@@ -1,3 +1,9 @@
+The stock MinGW CRT gettimeofday/getntptimeofday holds a static reference to
+GetSystemTimeAsFileTime (Windows 2000+), so any program that pulls in gettimeofday
+fails to load on NT 4.0. Resolve it dynamically via GetProcAddress and fall back
+to a GetSystemTime + SystemTimeToFileTime emulation (both present on every NT
+release). Applied only for NT4 targets (_WIN32_WINNT < 0x0500).
+
 diff --git a/mingw-w64-crt/misc/gettimeofday.c b/mingw-w64-crt/misc/gettimeofday.c
 index 968f3ed..19086e5 100644
 --- a/mingw-w64-crt/misc/gettimeofday.c

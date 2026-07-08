@@ -1,3 +1,12 @@
+libc++'s Windows locale shim uses the per-locale "_l" CRT helpers (_toupper_l/
+_tolower_l, the _iswXXX_l/_towXXX_l ctype set, _strcoll_l/_strxfrm_l/_wcscoll_l/
+_wcsxfrm_l, _mbtowc_l). These exist only in msvcr80+/UCRT: some fail to compile
+(mingw does not declare them), others (e.g. _mbtowc_l) link as msvcrt.dll imports
+the legacy system DLL does not export, so a C++ program fails to load on pre-Vista
+with "_mbtowc_l could not be located". Route them through a thread-locale guard
+around the plain functions so libc++ imports no _l symbols from msvcrt.dll.
+Self-guarding (active only for non-UCRT msvcrt < 0x0800), a no-op on UCRT builds.
+
 diff --git a/libcxx/include/__locale_dir/support/windows.h b/libcxx/include/__locale_dir/support/windows.h
 index 644ef68..8b0dcb6 100644
 --- a/libcxx/include/__locale_dir/support/windows.h

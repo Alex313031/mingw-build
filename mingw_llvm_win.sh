@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.5"
+SCRIPTVER="2.2.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -339,6 +339,14 @@ apply_patches() {
     execute "" "Failed to apply llvm-support-pre-vista.patch" \
         git apply --reject ../patches/llvm-support-pre-vista.patch
   fi
+  # clang's DirectoryWatcher (compiled into libclang-cpp.dll) statically imports
+  # GetFinalPathNameByHandleW (Vista+), which blocks the DLL from LOADing on
+  # XP/2000 -- lib/Support's copy is already handled by the patch above, but this
+  # clang call site is separate. Resolve it dynamically. Self-guarding (#if
+  # _WIN32_WINNT < 0x0600) so it is a no-op on Vista+ targets; only the Windows
+  # host compiles this file (Linux host builds DirectoryWatcher-linux.cpp).
+  execute "" "Failed to apply clang-directorywatcher-pre-vista.patch" \
+      git apply --reject ../patches/clang-directorywatcher-pre-vista.patch
   # Bake the PE OS/subsystem version into lld's defaults instead of stamping it
   # via the wrappers: lld/COFF picks major/minor from _WIN32_WINNT at COMPILE
   # time (so the Phase 2 LLVM cmake passes -D_WIN32_WINNT=$WIN32_WINNT). Also
@@ -907,7 +915,13 @@ build_phase2_windows() {
   # and can't link into a static Windows .exe, and cross-building a static,
   # XP-safe libxml2 isn't worth it for one rarely-used tool. lld still embeds
   # manifests without it; only multi-manifest *merging* is lost.
-  local llvm_dist="clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov"
+  # Shared-library build (matches upstream llvm-mingw): LLVM_LINK_LLVM_DYLIB=ON
+  # (below) places all LLVM/clang code into libLLVM*.dll + libclang-cpp.dll once,
+  # so every tool becomes a thin stub linking them -- cutting the toolchain to a
+  # fraction of the static size. The leading LLVM and clang-cpp components install
+  # those two DLLs; without them, install-distribution would ship stub tools with
+  # no library to load.
+  local llvm_dist="LLVM;clang-cpp;clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov"
   execute "($arch P2): Configuring Windows-hosted LLVM" "Configuring Windows LLVM failed" \
       cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
@@ -936,6 +950,7 @@ build_phase2_windows() {
       -DLLVM_INCLUDE_TESTS=OFF \
       -DLLVM_INCLUDE_BENCHMARKS=OFF \
       -DLLVM_INCLUDE_EXAMPLES=OFF \
+      -DLLVM_LINK_LLVM_DYLIB=ON \
       -DLLVM_DISTRIBUTION_COMPONENTS="$llvm_dist" \
       -DLLVM_ENABLE_ZSTD=OFF \
       -DLLVM_ENABLE_ZLIB=OFF \
@@ -948,7 +963,8 @@ build_phase2_windows() {
       -DCMAKE_C_FLAGS="$TARGET_CFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
       -DCMAKE_CXX_FLAGS="$TARGET_CXXFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
       -DCMAKE_EXE_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-static -pthread"
+      -DCMAKE_SHARED_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG" \
+      -DCMAKE_MODULE_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG"
 
   # --clang-format: build ONLY clang-format.exe (cross-compiled via Phase 1's
   # clang) and drop it into the prefix's bin/, then stop -- skips the full LLVM

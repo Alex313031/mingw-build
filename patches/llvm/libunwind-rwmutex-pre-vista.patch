@@ -1,3 +1,8 @@
+libunwind's Win32 reader/writer mutex (RWMutex.hpp) uses SRWLOCK, a Vista+
+primitive. Add a pre-Vista CRITICAL_SECTION fallback so libunwind stays
+dependency-free (no winpthreads) on NT 4.0/2000/XP. Self-guarding on _WIN32_WINNT
+< 0x0600, a no-op on Vista+.
+
 diff --git a/libunwind/src/RWMutex.hpp b/libunwind/src/RWMutex.hpp
 index 344d35641..f3422e482 100644
 --- a/libunwind/src/RWMutex.hpp

@@ -1,3 +1,9 @@
+Lowers the MinGW WinSDK version headers to a sane legacy default. sdkddkver.h
+defaults _WIN32_WINNT/NTDDI_VERSION/WINVER/_WIN32_IE down from Server 2003 to XP,
+and winsdkver.h lowers the _WIN32_MAXVER/NTDDI_MAXVER ceilings, so a build that
+does not pin a target still aims at old Windows rather than Vista+. Also adds a
+missing VS_FF_RELEASE definition to winver.h.
+
 diff --git a/mingw-w64-headers/include/sdkddkver.h b/mingw-w64-headers/include/sdkddkver.h
 index ee1ef33..0cc0224 100644
 --- a/mingw-w64-headers/include/sdkddkver.h

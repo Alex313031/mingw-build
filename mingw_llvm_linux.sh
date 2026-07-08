@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.5"
+SCRIPTVER="2.2.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"

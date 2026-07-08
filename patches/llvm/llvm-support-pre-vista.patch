@@ -1,9 +1,9 @@
-Makes the LLVM toolchain binaries (clang, lld, llvm-*) LOAD and run on Windows
-XP/2000. lib/Support's Windows code (and a couple of tools) statically import
-functions that don't exist before Vista/Win7; a static import of a missing
-function makes the whole .exe fail to start. Each is resolved dynamically via
-GetProcAddress (as LLVM already does for PrefetchVirtualMemory /
-SetThreadInformation), with a fallback:
+Makes the LLVM toolchain binaries (clang, lld, llvm-*) and the shared libLLVM /
+libclang-cpp DLLs LOAD and run on Windows XP/2000. lib/Support's Windows code
+(and a couple of tools) statically import functions that don't exist before
+Vista/Win7; a static import of a missing function makes the whole .exe or .dll
+fail to start. Each is resolved dynamically via GetProcAddress (as LLVM already
+does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
 
   Path.inc:
     - GetFinalPathNameByHandleW (Vista): realPathFromHandle fails soft.
@@ -21,6 +21,12 @@ SetThreadInformation), with a fallback:
   tools/llvm-ar/llvm-ar.cpp (also llvm-lib / llvm-ranlib / llvm-dlltool):
     - CompareStringOrdinal (Vista): comparePaths falls back to an ASCII
       case-insensitive ordinal compare.
+  raw_socket_stream.cpp:
+    - WSAPoll (Vista): manageTimeout resolves it dynamically and fails soft
+      (function_not_supported) on XP/2000. Self-guarded on _WIN32_WINNT < 0x0600.
+      The monolithic libLLVM dylib links this socket code that the static tools
+      dead-stripped, so WSAPoll is XP-exposed only in the shared-library build;
+      the toolchain never opens sockets on those hosts.
 
 The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
 separately by building with -DPSAPI_VERSION=1, not by this patch.
@@ -440,6 +446,32 @@ index 86e46b99c..183c25e3b 100644
  
    static unsigned All =
        aggregate(getProcessorGroups(),
+diff --git a/llvm/lib/Support/raw_socket_stream.cpp b/llvm/lib/Support/raw_socket_stream.cpp
+index f71631730..662255034 100644
+--- a/llvm/lib/Support/raw_socket_stream.cpp
++++ b/llvm/lib/Support/raw_socket_stream.cpp
+@@ -242,7 +242,21 @@ manageTimeout(const std::chrono::milliseconds &Timeout,
+       RemainingTimeout = Timeout - TotalElapsedTime;
+     }
+ #ifdef _WIN32
++#if defined(_WIN32_WINNT) && (_WIN32_WINNT < 0x0600)
++    // WSAPoll is Vista+; resolve it dynamically so libLLVM still LOADs on
++    // Windows XP/2000, where a static import would block the DLL from starting.
++    // The toolchain never uses LLVM's socket support on those hosts, so fail
++    // soft (function_not_supported) when the export is absent. ws2_32.dll is a
++    // load-time dependency here (socket/bind/... are imported), so it is mapped.
++    using WSAPoll_t = int(WSAAPI *)(LPWSAPOLLFD, ULONG, INT);
++    static WSAPoll_t WSAPollFn = reinterpret_cast<WSAPoll_t>(
++        ::GetProcAddress(::GetModuleHandleW(L"ws2_32.dll"), "WSAPoll"));
++    if (!WSAPollFn)
++      return std::make_error_code(std::errc::function_not_supported);
++    PollStatus = WSAPollFn(FD, FDCount, RemainingTimeout.count());
++#else
+     PollStatus = WSAPoll(FD, FDCount, RemainingTimeout.count());
++#endif
+   } while (PollStatus == SOCKET_ERROR &&
+            getLastSocketErrorCode() == std::errc::interrupted);
+ #else
 diff --git a/llvm/tools/llvm-ar/llvm-ar.cpp b/llvm/tools/llvm-ar/llvm-ar.cpp
 index 320a903b5..160155fcf 100644
 --- a/llvm/tools/llvm-ar/llvm-ar.cpp
