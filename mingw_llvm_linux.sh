@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.6"
+SCRIPTVER="2.3.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -96,11 +96,12 @@ Options:
   --keep-artifacts            Don't remove source and build files after a successful build.
   --disable-threads           Disable pthreads and STL <thread>.
   -c, --cached-sources        Use existing sources instead of downloading new ones and patching them.
+  --incremental               Fast iteration: reuse existing sources, build trees and install prefix, re-apply patches, and rebuild only what changed. Implies -c and --keep-artifacts; needs a prior --keep-artifacts/--incremental build.
   -d, --download-sources      Only download sources, then exit; for making local modifications.
   -p, --patch                 Only apply patches to already-downloaded sources, then exit; needs no arch.
   --clang-format              Build only clang-format (no full toolchain) and copy it into <prefix>/bin; for adding/refreshing it on an existing build.
   --clean                     Removes all sources and build artifacts, and output (keeps the previous build.log as build.log.old).
-  --keep-src                  Like --clean but keeps the src/ tree (downloaded + patched sources), so a later build with -c skips re-downloading and re-patching.
+  --dist-clean                Like --clean but keeps the src/ tree (downloaded + patched sources), so a later build with -c skips re-downloading and re-patching.
   --llvm-url <url>            Set LLVM source URL, (default: $LLVM_URL)
   --llvm-branch <branch>      Set LLVM branch, (default: $LLVM_BRANCH)
   --mingw-url <url>           Set MinGW-w64 source url, (default: $MINGW_W64_URL)
@@ -226,7 +227,7 @@ clean_build() {
   fi
 
   # nuke everything else under the build directory, preserving build.log.old.
-  # With --keep-src also preserve the downloaded+patched src tree so a later
+  # With --dist-clean also preserve the downloaded+patched src tree so a later
   # build can reuse it via -c instead of re-cloning and re-patching.
   local keep_args=( ! -name "$(basename "$LOG_FILE").old" )
   if [ "$keep_src" ]; then
@@ -451,6 +452,47 @@ EOF
   ln -sf "ld.lld" "$bindir/$wrap-ld"
 }
 
+# --incremental helper: reset the (kept) git source trees to pristine and re-apply
+# every patch, so edits to a .patch take effect -- but keep the mtime of any file
+# whose re-patched content is byte-identical to before, so the build tool recompiles
+# only the files a patch actually changed. Needs the sources to already exist (a
+# prior --keep-artifacts or --incremental build). Only the SOURCE is reset; build
+# trees and the install prefix are kept so the build resumes where it left off.
+reapply_patches_incremental() {
+  log "${GRE}Incremental: resetting sources + re-applying patches...${c0}\n"
+  local manifest; manifest="$(mktemp)"
+  local rel repo f oh om
+  # The git source trees to reset -- whatever download_sources cloned.
+  local repos=()
+  for repo in "$SRC_PATH"/*/.git; do
+    [ -d "$repo" ] && repos+=("${repo%/.git}")
+  done
+  # 1. hash + mtime of every file the current patches touch, before the reset.
+  for f in "$HERE"/patches/*/*.patch; do
+    sed -n 's|^+++ b/\([^[:space:]]*\).*|\1|p' "$f"
+  done | sort -u | while read -r rel; do
+    for repo in "${repos[@]}"; do
+      f="$repo/$rel"
+      [ -f "$f" ] && printf '%s\t%s\t%s\n' \
+        "$f" "$(sha1sum < "$f" | cut -d' ' -f1)" "$(stat -c %Y "$f")"
+    done
+  done > "$manifest"
+  # 2. reset each git tree to pristine (undo patch edits, drop .rej / added files).
+  for repo in "${repos[@]}"; do
+    execute "" "Failed to reset $(basename "$repo") to pristine" \
+        git -C "$repo" checkout -- .
+    git -C "$repo" clean -fdq
+  done
+  rm -f "$SRC_PATH/patches/applied_patches"
+  # 3. re-apply (copies the current patches in, applies them, re-touches sentinel).
+  apply_patches || error_exit "Failed to re-apply patches"
+  # 4. restore mtime wherever the re-patched content is unchanged, so the build skips it.
+  while IFS=$'\t' read -r f oh om; do
+    [ -f "$f" ] && [ "$(sha1sum < "$f" | cut -d' ' -f1)" = "$oh" ] && touch -d "@$om" "$f"
+  done < "$manifest"
+  rm -f "$manifest"
+}
+
 build() {
   if [ "$WIN32_WINNT" != "0" ]; then
     export _WIN32_WINNT=$WIN32_WINNT
@@ -486,7 +528,9 @@ build() {
 
   # --clang-format reuses the existing build tree + prefix (it just drops a fresh
   # clang-format into bin/), so don't wipe them in that mode.
-  if [ ! "$CLANG_FORMAT_ONLY" ]; then
+  # --incremental keeps the build tree + prefix so the build resumes where it left
+  # off; only wipe them on a normal build.
+  if [ ! "$CLANG_FORMAT_ONLY" ] && [ ! "$INCREMENTAL" ]; then
     remove_path "$bld_path"
     # don't remove a user defined prefix (could be /usr/local)
     if [ ! "$PREFIX" ]; then
@@ -1021,8 +1065,8 @@ while :; do
     --clean)
         CLEAN=1
         ;;
-    --keep-src)
-        KEEP_SRC=1
+    --dist-clean)
+        DIST_CLEAN=1
         ;;
     -p|--patch)
         PATCHES_ONLY=1
@@ -1035,6 +1079,14 @@ while :; do
         ;;
     -c|--cached-sources)
         CACHED_SOURCES=1
+        ;;
+    --incremental)
+        # Fast rebuild loop: reuse the existing sources, build trees and install
+        # prefix, re-apply patches so edits take effect, and let the build tool do
+        # the minimal recompile. Implies --cached-sources and --keep-artifacts.
+        INCREMENTAL=1
+        CACHED_SOURCES=1
+        KEEP_ARTIFACTS=1
         ;;
     -d|--download-sources)
         JUST_SOURCES=1
@@ -1186,7 +1238,7 @@ while :; do
 done
 
 if [ "$ROOT_PATH_ARG" ]; then
-  if { [ "$CLEAN" ] || [ "$KEEP_SRC" ]; } && [ ! -d "$ROOT_PATH_ARG" ]; then
+  if { [ "$CLEAN" ] || [ "$DIST_CLEAN" ]; } && [ ! -d "$ROOT_PATH_ARG" ]; then
     # don't create the directory just to clean it
     ROOT_PATH="$ROOT_PATH_ARG"
   else
@@ -1198,10 +1250,10 @@ if [ "$ROOT_PATH_ARG" ]; then
   LOG_FILE="$ROOT_PATH/build.log"
 fi
 
-# --clean / --keep-src are standalone commands: wipe the build dir and exit, no
-# arch needed. --keep-src preserves the src/ tree for a fast cached rebuild (-c).
-if [ "$CLEAN" ] || [ "$KEEP_SRC" ]; then
-  clean_build "$KEEP_SRC"
+# --clean / --dist-clean are standalone commands: wipe the build dir and exit, no
+# arch needed. --dist-clean preserves the src/ tree for a fast cached rebuild (-c).
+if [ "$CLEAN" ] || [ "$DIST_CLEAN" ]; then
+  clean_build "$DIST_CLEAN"
   exit 0
 fi
 
@@ -1310,6 +1362,13 @@ else
   if [ "$CACHED_SOURCES" ]; then
     log "${YEL}NOTE: Using cached sources.${c0}\n"
   fi
+fi
+
+# --incremental: reset the kept sources to pristine and re-apply patches (mtime-
+# preserving) so patch edits take effect and only what changed is rebuilt. Runs
+# once here; build()'s own apply_patches is then a no-op (sentinel present).
+if [ "$INCREMENTAL" ]; then
+  reapply_patches_incremental
 fi
 
 BUILD=$(sh "$SRC_PATH/config.guess")

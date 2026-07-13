@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.2.6"
+SCRIPTVER="2.3.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -111,11 +111,12 @@ Options:
   --keep-artifacts            Don't remove source and build files (incl. the Phase 1 Linux-hosted intermediate) after a successful build.
   --disable-threads           Disable pthreads and STL <thread>.
   -c, --cached-sources        Use existing sources instead of downloading new ones and patching them.
+  --incremental               Fast iteration: reuse existing sources, build trees and install prefix, re-apply patches, and let Ninja rebuild only what changed. Implies -c and --keep-artifacts; needs a prior --keep-artifacts/--incremental build. (rsync needed for the sysroot sync)
   -d, --download-sources      Only download sources, then exit; for making local modifications.
   -p, --patch                 Only apply patches to already-downloaded sources, then exit; needs no arch.
   --clang-format              Build only clang-format.exe (no full toolchain) and copy it into <prefix>/bin; reuses Phase 1 if present.
   --clean                     Removes all sources and build artifacts, and output (keeps the previous build.log as build.log.old).
-  --keep-src                  Like --clean but keeps the src/ tree (downloaded + patched sources), so a later build with -c skips re-downloading and re-patching.
+  --dist-clean                Like --clean but keeps the src/ tree (downloaded + patched sources), so a later build with -c skips re-downloading and re-patching.
   --llvm-url <url>            Set LLVM source URL, (default: $LLVM_URL)
   --llvm-branch <branch>      Set LLVM branch, (default: $LLVM_BRANCH)
   --mingw-url <url>           Set MinGW-w64 source url, (default: $MINGW_W64_URL)
@@ -241,7 +242,7 @@ clean_build() {
   fi
 
   # nuke everything else under the build directory, preserving build.log.old.
-  # With --keep-src also preserve the downloaded+patched src tree so a later
+  # With --dist-clean also preserve the downloaded+patched src tree so a later
   # build can reuse it via -c instead of re-cloning and re-patching.
   local keep_args=( ! -name "$(basename "$LOG_FILE").old" )
   if [ "$keep_src" ]; then
@@ -338,6 +339,13 @@ apply_patches() {
   if (( WIN32_WINNT < 0x0601 )); then
     execute "" "Failed to apply llvm-support-pre-vista.patch" \
         git apply --reject ../patches/llvm-support-pre-vista.patch
+    # TempFile's atomic temp+rename (FileOutputBuffer -> llvm-rc/windres, lld,
+    # llvm-objcopy, ...) renames via the HANDLE-based rename_handle(), which needs
+    # SetFileInformationByHandle / GetFinalPathNameByHandleW (Vista+). Pre-Vista,
+    # rename by path instead (MoveFileExW fix from llvm-support-pre-vista.patch).
+    # No-op above XP (RemoveOnClose is only set when the disposition call fails).
+    execute "" "Failed to apply llvm-tempfile-pre-vista.patch" \
+        git apply --reject ../patches/llvm-tempfile-pre-vista.patch
   fi
   # clang's DirectoryWatcher (compiled into libclang-cpp.dll) statically imports
   # GetFinalPathNameByHandleW (Vista+), which blocks the DLL from LOADing on
@@ -353,6 +361,25 @@ apply_patches() {
   # lets .def version fields be hex. Correct for any target -> applied ungated.
   execute "" "Failed to apply llvm-coff-fixes.patch" \
       git apply --reject ../patches/llvm-coff-fixes.patch
+  # Resolve libunwind's EnumProcessModules dynamically so it carries no static
+  # psapi import. Lets the build drop the -Wl,--whole-archive -lpsapi hammer (which
+  # force-linked ALL of psapi, incl. Vista+ exports XP lacks) for a plain -lpsapi
+  # at the end of the link line -- see the psapi comment in build_phase2_windows.
+  execute "" "Failed to apply libunwind-psapi-dynamic.patch" \
+      git apply --reject ../patches/libunwind-psapi-dynamic.patch
+  # push_macro/pop_macro so LLVM Support code sees the caller's legacy _WIN32_WINNT
+  # in the code body while the Windows headers stay pinned at 0x0601, plus the
+  # re-pins that files pulling in extra Windows headers need (Path.inc shlobj,
+  # raw_socket_stream winsock2). Must precede llvm-extra.patch, which rides on the same
+  # WindowsSupport.h. NOTE: maintenance-heavy -- new Support files that include
+  # extra Windows headers past WindowsSupport.h may need their own re-pin.
+  execute "" "Failed to apply llvm-win32-winnt-guard.patch" \
+      git apply --reject ../patches/llvm-win32-winnt-guard.patch
+  # Runtime Windows host-OS helpers (IsLegacyWindows / GetWindowsOSName / Running*
+  # OrGreater) + logging the host OS in clang/lld --version. Windows-host only;
+  # behavioral/diagnostic, does NOT fix load-time imports.
+  execute "" "Failed to apply llvm-extra.patch" \
+      git apply --reject ../patches/llvm-extra.patch
   printf "${YEL}  Patching MinGW...${c0}\n"
   change_dir "$SRC_PATH/mingw-w64"
   execute "" "Failed to apply mingw-gendef-silent.patch" \
@@ -436,6 +463,29 @@ copy_extra_files() {
   execute "" "Failed to copy mingw.svg" cp -fv ${HERE}/assets/mingw-w64.svg $prefix/mingw.svg
 }
 
+# LLVM's install creates the multicall-tool aliases (ld.lld, lld-link, llvm-windres,
+# clang++, llvm-dlltool, llvm-ranlib, ...) as symlinks to the base binary. On a
+# Linux->Windows cross build those are UNIX symlinks that Windows cannot follow --
+# launching one gives "The system cannot execute the specified program" / "The file
+# cannot be accessed by the system", and a .zip ships them as dangling 9-byte stubs.
+# Replace every symlink under the prefix with a real file. These are multicall
+# binaries: they dispatch on argv[0], which is the entry's own filename, so a plain
+# duplicate is functionally identical to the symlink. Use a HARDLINK (cp -l) so it
+# costs no extra space on the build filesystem -- like upstream llvm-mingw -- falling
+# back to a copy across filesystems. NOTE: a .zip/copy to Windows expands hardlinks
+# into full copies, so the DISTRIBUTED size still grows (~29 MB, mostly lld.exe's 4
+# aliases); Windows has no working symlink for this. Runtime lib symlinks in the
+# sysroot get the same treatment (also broken on Windows).
+flatten_install_symlinks() {
+  local prefix="$1" l tgt n=0
+  while IFS= read -r -d '' l; do
+    tgt=$(readlink -f "$l" 2>/dev/null) || continue
+    [ -f "$tgt" ] || continue   # skip dir symlinks / dangling
+    rm -f "$l" && { cp -lf "$tgt" "$l" 2>/dev/null || cp -f "$tgt" "$l"; } && n=$((n + 1))
+  done < <(find "$prefix" -type l -print0 2>/dev/null)
+  log "${GRE}Flattened $n Unix symlink(s) to real files (Windows can't follow them).${c0}\n"
+}
+
 # Generate the familiar <arch>-w64-mingw32-* toolchain entry points in the
 # prefix's bin dir. The clang driver infers C vs C++ mode from "++" in argv[0];
 # we bake in --target and --sysroot only. Deliberately NO -march/SIMD flags: the
@@ -503,13 +553,26 @@ generate_wrappers_windows() {
       -DUNICODE -D_UNICODE -DTARGET="\"$triple\"" \
       "$HERE/assets/src/clang-target-wrapper.c" -o "$wrapper"
 
-  # Stamp the wrapper out under every entry-point name (a few KB each).
+  # Stamp the wrapper out under every entry-point name (a few KB each). windres is
+  # handled separately below -- it must NOT be the shared wrapper.
   local name
   for name in clang clang++ gcc g++ cc c++ \
-              ar ranlib nm strip objcopy objdump dlltool windres strings addr2line ld; do
+              ar ranlib nm strip objcopy objdump dlltool strings addr2line ld; do
     execute "" "Failed to install $wrap-$name.exe" \
         cp -f "$wrapper" "$bindir/$wrap-$name.exe"
   done
+
+  # windres is special: llvm-rc/llvm-windres derives the preprocessor's --target
+  # from the triple PREFIX in its OWN program name (isWindres() parses
+  # "<triple>-windres"). The shared wrapper execs bare "llvm-windres", and Windows
+  # overwrites argv0 with the real module path ("llvm-windres", no prefix), so it
+  # falls back to a NORMALIZED default triple (i586-w64-windows-gnu) that clang
+  # can't map to the ../<triple> mingw sysroot -> "windows.h: No such file". Ship a
+  # real copy of llvm-rc.exe named <triple>-windres.exe so the prefix is in the
+  # name: Opts.Triple becomes the literal <triple>, and it finds <triple>-clang
+  # (which resolves the sysroot). ~0.5 MB; same trick upstream llvm-mingw uses.
+  execute "" "Failed to install $wrap-windres.exe" \
+      cp -f "$bindir/llvm-rc.exe" "$bindir/$wrap-windres.exe"
 }
 
 # Compute every arch-derived flag the two build phases share, into GLOBALS
@@ -675,8 +738,12 @@ build_phase1_linux() {
 
   export PATH="$prefix/bin:$PATH"
 
-  remove_path "$bld_path"
-  remove_path "$prefix"
+  # --incremental keeps the existing Phase 1 build tree + prefix so Ninja can do a
+  # minimal recompile and install over them; only wipe them on a normal build.
+  if [ ! "$INCREMENTAL" ]; then
+    remove_path "$bld_path"
+    remove_path "$prefix"
+  fi
 
   # CMAKE flags for runtime (target) builds: drive the Phase 1 clang as a cross
   # compiler for $triple.
@@ -809,6 +876,27 @@ build_phase1_linux() {
   fi
 
   # 6. LLVM runtimes: libunwind + libc++abi + libc++
+  #
+  # libc++ is built BOTH static (libc++.a, for self-contained target programs)
+  # AND shared (libc++.dll). The shared build is required for correctness of the
+  # Phase 2 LLVM_LINK_LLVM_DYLIB toolchain: with static libc++, each of
+  # libLLVM-*.dll and libclang-cpp.dll embeds its own copy of libc++, giving
+  # each dylib a distinct std::error_code category singleton. std::error_code
+  # comparison tests the category by ADDRESS, so a "file not found" produced in
+  # libLLVM's Support code never compares equal to llvm::errc::no_such_file...
+  # when checked in libclang's HeaderSearch -- clang then treats a missing entry
+  # in one -I/-isystem dir as a fatal "cannot open file" instead of falling
+  # through to the next dir, breaking every compile with a user -I. A single
+  # shared libc++.dll gives all modules one category singleton. libc++abi and
+  # libunwind stay static (folded into libc++.dll) so it is self-contained.
+  #
+  # The LIB*_HAS_{ATOMIC,DL,C}_LIB=OFF overrides below are required for the
+  # SHARED build: libc++/libunwind/libc++abi config-ix.cmake only special-case
+  # `WIN32 AND NOT MINGW`, so a mingw target falls through to the generic Unix
+  # branch and mis-detects -latomic/-ldl/-lc (none of which exist on mingw --
+  # atomics are compiler builtins, dl is in kernel32, libc is msvcrt). A static
+  # .a never links so it slid by, but the shared libc++.dll link fails on the
+  # missing libs. Forcing them off matches how mingw actually provides them.
   local LIBCXX_THREADS
   if [ "$ENABLE_THREADS" ]; then
     LIBCXX_THREADS="-DLIBCXX_ENABLE_THREADS=ON -DLIBCXXABI_ENABLE_THREADS=ON -DLIBUNWIND_ENABLE_THREADS=ON -DLIBCXX_HAS_PTHREAD_API=ON"
@@ -840,9 +928,14 @@ build_phase1_linux() {
       -DLIBCXX_USE_COMPILER_RT=ON \
       -DLIBCXX_CXX_ABI=libcxxabi \
       -DLIBCXX_ENABLE_STATIC_ABI_LIBRARY=ON \
-      -DLIBCXX_ENABLE_SHARED=OFF \
+      -DLIBCXX_ENABLE_SHARED=ON \
       -DLIBCXX_ENABLE_STATIC=ON \
       -DLIBCXX_ENABLE_EXCEPTIONS=ON \
+      -DLIBCXX_HAS_ATOMIC_LIB=OFF \
+      -DLIBUNWIND_HAS_DL_LIB=OFF \
+      -DLIBUNWIND_HAS_C_LIB=OFF \
+      -DLIBCXXABI_HAS_DL_LIB=OFF \
+      -DLIBCXXABI_HAS_C_LIB=OFF \
       $LIBCXX_THREADS
   execute "($arch P1): Building libunwind/libc++abi/libc++" "Building runtimes failed" \
       ninja -j $JOB_COUNT
@@ -867,7 +960,7 @@ build_phase2_windows() {
   # Do NOT wipe $bld_path here: Phase 1's llvm/ build tree (with the native
   # tblgens) still lives there and the LLVM cross-build needs it.
   # --clang-format adds to the existing prefix, so don't wipe it in that mode.
-  if [ ! "$PREFIX" ] && [ ! "$CLANG_FORMAT_ONLY" ]; then
+  if [ ! "$PREFIX" ] && [ ! "$CLANG_FORMAT_ONLY" ] && [ ! "$INCREMENTAL" ]; then
     remove_path "$prefix"
   fi
 
@@ -891,9 +984,13 @@ build_phase2_windows() {
   #    target and links no thread lib, but our libc++/LLVM use pthreads, so we
   #    force clang to pull in winpthreads (-lpthread) at compile and link time.
   #    psapi: LLVM Support only links it under if(MSVC OR MINGW), but CMake sees
-  #    clang-with-a-mingw-target as neither, so we add it. mingw import libs are
-  #    order-sensitive and linker flags precede the objects, so --whole-archive
-  #    force-includes it (psapi is tiny) instead of relying on link order.
+  #    clang-with-a-mingw-target as neither, so we add it -- via
+  #    CMAKE_*_STANDARD_LIBRARIES so -lpsapi lands at the END of the link line
+  #    (after the objects that reference EnumProcessModules/GetProcessMemoryInfo),
+  #    pulling ONLY those two symbols. An earlier --whole-archive force-linked ALL
+  #    of psapi, including Vista+ exports (EnumProcessModulesEx/QueryWorkingSetEx/
+  #    GetWsChangesEx) that XP's psapi.dll lacks -> the tools failed to LOAD on XP.
+  #    libunwind's own EnumProcessModules is resolved dynamically instead.
   create_dir "$bld_path/llvm-win"
   change_dir "$bld_path/llvm-win"
   # Toolchain-only install set, applied via `ninja install-distribution` below:
@@ -921,6 +1018,15 @@ build_phase2_windows() {
   # fraction of the static size. The leading LLVM and clang-cpp components install
   # those two DLLs; without them, install-distribution would ship stub tools with
   # no library to load.
+  #
+  # NOTE: the linker flags below intentionally OMIT -static. With the shared
+  # dylib build, libc++ must be linked SHARED (as libc++.dll, built in Phase 1)
+  # so libLLVM-*.dll, libclang-cpp.dll and every tool share ONE libc++ -- hence
+  # one std::error_code category singleton (see the runtimes comment above; a
+  # per-module libc++ makes clang's header-search fall-through fatally misfire).
+  # Only libc++ has a shared variant in the sysroot (libunwind/libc++abi/
+  # winpthreads/compiler-rt are all static-only), so dropping -static makes
+  # ONLY libc++ dynamic; everything else stays statically linked as before.
   local llvm_dist="LLVM;clang-cpp;clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov"
   execute "($arch P2): Configuring Windows-hosted LLVM" "Configuring Windows LLVM failed" \
       cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
@@ -962,9 +1068,11 @@ build_phase2_windows() {
       -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
       -DCMAKE_C_FLAGS="$TARGET_CFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
       -DCMAKE_CXX_FLAGS="$TARGET_CXXFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
-      -DCMAKE_EXE_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG" \
-      -DCMAKE_MODULE_LINKER_FLAGS="-static -pthread -Wl,--whole-archive -lpsapi -Wl,--no-whole-archive $STRIP_FLAG"
+      -DCMAKE_EXE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-pthread $STRIP_FLAG" \
+      -DCMAKE_MODULE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
+      -DCMAKE_C_STANDARD_LIBRARIES="-lpsapi" \
+      -DCMAKE_CXX_STANDARD_LIBRARIES="-lpsapi"
 
   # --clang-format: build ONLY clang-format.exe (cross-compiled via Phase 1's
   # clang) and drop it into the prefix's bin/, then stop -- skips the full LLVM
@@ -992,10 +1100,33 @@ build_phase2_windows() {
   # 2. Reuse Phase 1's target runtimes -- identical PE bits regardless of where
   #    the compiler runs: the sysroot ($triple: headers + CRT + libc++/libunwind/
   #    winpthreads) and the compiler-rt builtins in the clang resource dir.
-  execute "($arch P2): Copying target sysroot from Phase 1" "Failed to copy sysroot" \
-      cp -a "$p1/$triple" "$prefix/"
-  execute "($arch P2): Copying compiler-rt builtins from Phase 1" "Failed to copy builtins" \
-      cp -a "$p1/lib/clang" "$prefix/lib/"
+  if [ "$INCREMENTAL" ]; then
+    # The prefix is kept, so its sysroot/builtins already exist -- a plain cp -a
+    # would nest them. rsync --delete makes an unchanged sysroot near-free while a
+    # changed one (e.g. a libcxx/libunwind patch rebuilt in Phase 1) still lands.
+    execute "($arch P2): Syncing target sysroot from Phase 1" "Failed to sync sysroot" \
+        rsync -a --delete "$p1/$triple/" "$prefix/$triple/"
+    execute "($arch P2): Syncing compiler-rt builtins from Phase 1" "Failed to sync builtins" \
+        rsync -a --delete "$p1/lib/clang/" "$prefix/lib/clang/"
+  else
+    execute "($arch P2): Copying target sysroot from Phase 1" "Failed to copy sysroot" \
+        cp -a "$p1/$triple" "$prefix/"
+    execute "($arch P2): Copying compiler-rt builtins from Phase 1" "Failed to copy builtins" \
+        cp -a "$p1/lib/clang" "$prefix/lib/"
+  fi
+
+  # 2b. Ship the shared libc++.dll next to the host binaries (clang.exe,
+  #     libLLVM-*.dll, libclang-cpp.dll, lld, llvm-*), so every module resolves
+  #     libc++ from the SAME DLL -> one std::error_code category singleton (see
+  #     the Phase 1 runtimes note). The host binaries were linked against it in
+  #     step 1; Windows loads it from the exe's own directory (bin/).
+  execute "($arch P2): Installing shared libc++.dll into host bin/" "Failed to install libc++.dll" \
+      cp -av "$prefix/$triple/bin/"libc++*.dll "$prefix/bin/"
+  # Keep TARGET programs self-contained: drop the shared import lib (and the now-
+  # unreferenced sysroot DLL) so the deployed sysroot's default -lc++ resolves to
+  # the static libc++.a -- target .exe/.dll stay dependency-free for XP, exactly
+  # as before. (Only the host toolchain uses the shared libc++.dll, from bin/.)
+  rm -f "$prefix/$triple/lib/"libc++*.dll.a "$prefix/$triple/bin/"libc++*.dll
 
   # 3. gendef -> gendef.exe (Canadian cross via the Phase 1 wrapper).
   create_dir "$bld_path/gendef-win"
@@ -1025,12 +1156,57 @@ build_phase2_windows() {
   done
 
   copy_extra_files "$triple" "$prefix"
+  # LLVM installs its multicall aliases (ld.lld, lld-link, llvm-windres, clang++,
+  # ...) as Unix symlinks; Windows can't follow them, so turn them into real files.
+  flatten_install_symlinks "$prefix"
   write_version_file "$arch" "$prefix" "Windows" "$VERSION_FLAGS"
   log "${GRE}Done building Windows-hosted toolchain for ${CYA}$arch ${c0}\n"
 }
 
 # Orchestrate a Windows-hosted toolchain for $arch via the two-phase Canadian
 # cross. $1 = arch, $2 = prefix (final Windows-hosted deliverable).
+# --incremental helper: reset the (kept) git source trees to pristine and re-apply
+# every patch, so edits to a .patch take effect -- but keep the mtime of any file
+# whose re-patched content is byte-identical to before, so Ninja recompiles only
+# the files a patch actually changed (a one-line patch tweak rebuilds one TU, not
+# every patched file). Needs the sources to already exist (a prior --keep-artifacts
+# or --incremental build). Only the LLVM/mingw SOURCE is reset; build trees and the
+# install prefix are kept so Ninja resumes where it left off.
+reapply_patches_incremental() {
+  log "${GRE}Incremental: resetting sources + re-applying patches...${c0}\n"
+  local manifest; manifest="$(mktemp)"
+  local rel repo f oh om
+  # The git source trees to reset -- whatever download_sources cloned.
+  local repos=()
+  for repo in "$SRC_PATH"/*/.git; do
+    [ -d "$repo" ] && repos+=("${repo%/.git}")
+  done
+  # 1. hash + mtime of every file the current patches touch, before the reset.
+  for f in "$HERE"/patches/*/*.patch; do
+    sed -n 's|^+++ b/\([^[:space:]]*\).*|\1|p' "$f"
+  done | sort -u | while read -r rel; do
+    for repo in "${repos[@]}"; do
+      f="$repo/$rel"
+      [ -f "$f" ] && printf '%s\t%s\t%s\n' \
+        "$f" "$(sha1sum < "$f" | cut -d' ' -f1)" "$(stat -c %Y "$f")"
+    done
+  done > "$manifest"
+  # 2. reset each git tree to pristine (undo patch edits, drop .rej / added files).
+  for repo in "${repos[@]}"; do
+    execute "" "Failed to reset $(basename "$repo") to pristine" \
+        git -C "$repo" checkout -- .
+    git -C "$repo" clean -fdq
+  done
+  rm -f "$SRC_PATH/patches/applied_patches"
+  # 3. re-apply (copies the current patches in, applies them, re-touches sentinel).
+  apply_patches || error_exit "Failed to re-apply patches"
+  # 4. restore mtime wherever the re-patched content is unchanged, so the build skips it.
+  while IFS=$'\t' read -r f oh om; do
+    [ -f "$f" ] && [ "$(sha1sum < "$f" | cut -d' ' -f1)" = "$oh" ] && touch -d "@$om" "$f"
+  done < "$manifest"
+  rm -f "$manifest"
+}
+
 build() {
   if [ "$WIN32_WINNT" != "0" ]; then
     export _WIN32_WINNT=$WIN32_WINNT
@@ -1180,8 +1356,8 @@ while :; do
     --clean)
         CLEAN=1
         ;;
-    --keep-src)
-        KEEP_SRC=1
+    --dist-clean)
+        DIST_CLEAN=1
         ;;
     -p|--patch)
         PATCHES_ONLY=1
@@ -1194,6 +1370,14 @@ while :; do
         ;;
     -c|--cached-sources)
         CACHED_SOURCES=1
+        ;;
+    --incremental)
+        # Fast rebuild loop: reuse the existing sources, build trees and install
+        # prefix, re-apply patches so edits take effect, and let Ninja do the
+        # minimal recompile. Implies --cached-sources and --keep-artifacts.
+        INCREMENTAL=1
+        CACHED_SOURCES=1
+        KEEP_ARTIFACTS=1
         ;;
     -d|--download-sources)
         JUST_SOURCES=1
@@ -1345,7 +1529,7 @@ while :; do
 done
 
 if [ "$ROOT_PATH_ARG" ]; then
-  if { [ "$CLEAN" ] || [ "$KEEP_SRC" ]; } && [ ! -d "$ROOT_PATH_ARG" ]; then
+  if { [ "$CLEAN" ] || [ "$DIST_CLEAN" ]; } && [ ! -d "$ROOT_PATH_ARG" ]; then
     # don't create the directory just to clean it
     ROOT_PATH="$ROOT_PATH_ARG"
   else
@@ -1357,10 +1541,10 @@ if [ "$ROOT_PATH_ARG" ]; then
   LOG_FILE="$ROOT_PATH/build.log"
 fi
 
-# --clean / --keep-src are standalone commands: wipe the build dir and exit, no
-# arch needed. --keep-src preserves the src/ tree for a fast cached rebuild (-c).
-if [ "$CLEAN" ] || [ "$KEEP_SRC" ]; then
-  clean_build "$KEEP_SRC"
+# --clean / --dist-clean are standalone commands: wipe the build dir and exit, no
+# arch needed. --dist-clean preserves the src/ tree for a fast cached rebuild (-c).
+if [ "$CLEAN" ] || [ "$DIST_CLEAN" ]; then
+  clean_build "$DIST_CLEAN"
   exit 0
 fi
 
@@ -1475,6 +1659,13 @@ else
   if [ "$CACHED_SOURCES" ]; then
     log "${YEL}NOTE: Using cached sources.${c0}\n"
   fi
+fi
+
+# --incremental: reset the kept sources to pristine and re-apply patches (mtime-
+# preserving) so patch edits take effect and Ninja recompiles only what changed.
+# Runs once here; build()'s own apply_patches is then a no-op (sentinel present).
+if [ "$INCREMENTAL" ]; then
+  reapply_patches_incremental
 fi
 
 BUILD=$(sh "$SRC_PATH/config.guess")
