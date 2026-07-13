@@ -13,6 +13,9 @@ does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
   Threading.inc:
     - GetLogicalProcessorInformationEx / Get|SetThreadGroupAffinity /
       GetProcessGroupAffinity (Win7): collapse to a single GetSystemInfo group.
+    - GetThreadId (Vista): thread::get_id() from a HANDLE -- resolved dynamically,
+      falling back to ntdll's NtQueryInformationThread (ClientId.UniqueThread) on
+      pre-Vista.
   Memory.inc:
     - GetLargePageMinimum (Vista): returns 0 -> large pages stay disabled.
   Signals.inc:
@@ -23,16 +26,19 @@ does for PrefetchVirtualMemory / SetThreadInformation), with a fallback:
       case-insensitive ordinal compare.
   raw_socket_stream.cpp:
     - WSAPoll (Vista): manageTimeout resolves it dynamically and fails soft
-      (function_not_supported) on XP/2000. Self-guarded on _WIN32_WINNT < 0x0600.
-      The monolithic libLLVM dylib links this socket code that the static tools
-      dead-stripped, so WSAPoll is XP-exposed only in the shared-library build;
-      the toolchain never opens sockets on those hosts.
+      (function_not_supported) on XP/2000. Resolved UNCONDITIONALLY (like the
+      Path.inc helper above), NOT #if-gated on _WIN32_WINNT: a compile-time guard
+      did not hold in the host LLVM build and left WSAPoll a static import, so
+      libLLVM-*.dll (and the llvm-ar/llvm-windres that link it) failed to load on
+      XP. The monolithic libLLVM dylib links this socket code that the static
+      tools dead-stripped, so WSAPoll is XP-exposed only in the shared-library
+      build; the toolchain never opens sockets on those hosts.
 
 The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
 separately by building with -DPSAPI_VERSION=1, not by this patch.
 
 diff --git a/llvm/lib/Support/Windows/Memory.inc b/llvm/lib/Support/Windows/Memory.inc
-index 93a32111e..9eb511a80 100644
+index 93a3211..9eb511a 100644
 --- a/llvm/lib/Support/Windows/Memory.inc
 +++ b/llvm/lib/Support/Windows/Memory.inc
 @@ -62,7 +62,16 @@ static size_t getAllocationGranularity() {
@@ -54,7 +60,7 @@ index 93a32111e..9eb511a80 100644
      OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
                       &Token);
 diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
-index 97dd75a74..06eef0405 100644
+index 97dd75a..06eef04 100644
 --- a/llvm/lib/Support/Windows/Path.inc
 +++ b/llvm/lib/Support/Windows/Path.inc
 @@ -448,18 +448,52 @@ std::error_code is_local(const Twine &path, bool &result) {
@@ -242,7 +248,7 @@ index 97dd75a74..06eef0405 100644
      llvm::sys::path::make_preferred(result);
    return ok;
 diff --git a/llvm/lib/Support/Windows/Signals.inc b/llvm/lib/Support/Windows/Signals.inc
-index eec112e5a..f400ae679 100644
+index eec112e..f400ae6 100644
 --- a/llvm/lib/Support/Windows/Signals.inc
 +++ b/llvm/lib/Support/Windows/Signals.inc
 @@ -604,6 +604,27 @@ static HKEY FindWERKey(const llvm::Twine &RegistryLocation) {
@@ -307,10 +313,53 @@ index eec112e5a..f400ae679 100644
                                          &TypeSize))
        return false;
 diff --git a/llvm/lib/Support/Windows/Threading.inc b/llvm/lib/Support/Windows/Threading.inc
-index 86e46b99c..183c25e3b 100644
+index 86e46b9..0690a3c 100644
 --- a/llvm/lib/Support/Windows/Threading.inc
 +++ b/llvm/lib/Support/Windows/Threading.inc
-@@ -168,15 +168,59 @@ struct ProcessorGroup {
+@@ -49,7 +49,41 @@ void llvm_thread_detach_impl(HANDLE hThread) {
+     ReportLastErrorFatal("CloseHandle failed");
+ }
+ 
+-DWORD llvm_thread_get_id_impl(HANDLE hThread) { return ::GetThreadId(hThread); }
++DWORD llvm_thread_get_id_impl(HANDLE hThread) {
++  // GetThreadId is Vista+; resolve it dynamically so libLLVM loads on XP/2000.
++  // Pre-Vista fall back to ntdll's NtQueryInformationThread, whose
++  // ClientId.UniqueThread is the thread id (present on every NT release).
++  using GetThreadId_t = DWORD(WINAPI *)(HANDLE);
++  static GetThreadId_t GetThreadIdFn = reinterpret_cast<GetThreadId_t>(
++      ::GetProcAddress(::GetModuleHandleW(L"kernel32.dll"), "GetThreadId"));
++  if (GetThreadIdFn)
++    return GetThreadIdFn(hThread);
++
++  struct CLIENT_ID_T {
++    HANDLE UniqueProcess;
++    HANDLE UniqueThread;
++  };
++  struct THREAD_BASIC_INFORMATION_T {
++    LONG ExitStatus;
++    PVOID TebBaseAddress;
++    CLIENT_ID_T ClientId;
++    ULONG_PTR AffinityMask;
++    LONG Priority;
++    LONG BasePriority;
++  };
++  using NtQueryInformationThread_t =
++      LONG(WINAPI *)(HANDLE, ULONG, PVOID, ULONG, PULONG);
++  static NtQueryInformationThread_t NtQueryInformationThreadFn =
++      reinterpret_cast<NtQueryInformationThread_t>(::GetProcAddress(
++          ::GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
++  THREAD_BASIC_INFORMATION_T tbi;
++  if (NtQueryInformationThreadFn &&
++      NtQueryInformationThreadFn(hThread, /*ThreadBasicInformation=*/0, &tbi,
++                                 sizeof(tbi), nullptr) >= 0)
++    return static_cast<DWORD>(
++        reinterpret_cast<DWORD_PTR>(tbi.ClientId.UniqueThread));
++  return 0;
++}
+ 
+ DWORD llvm_thread_get_current_id_impl() { return ::GetCurrentThreadId(); }
+ 
+@@ -168,15 +202,59 @@ struct ProcessorGroup {
    }
  };
  
@@ -372,7 +421,7 @@ index 86e46b99c..183c25e3b 100644
    if (R) {
      auto *End =
          (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((uint8_t *)Info + Len);
-@@ -193,8 +237,11 @@ static bool IterateProcInfo(LOGICAL_PROCESSOR_RELATIONSHIP Relationship, F Fn) {
+@@ -193,8 +271,11 @@ static bool IterateProcInfo(LOGICAL_PROCESSOR_RELATIONSHIP Relationship, F Fn) {
  }
  
  static std::optional<std::vector<USHORT>> getActiveGroups() {
@@ -385,7 +434,7 @@ index 86e46b99c..183c25e3b 100644
      return std::nullopt;
  
    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-@@ -202,7 +249,7 @@ static std::optional<std::vector<USHORT>> getActiveGroups() {
+@@ -202,7 +283,7 @@ static std::optional<std::vector<USHORT>> getActiveGroups() {
  
    std::vector<USHORT> Groups;
    Groups.resize(Count);
@@ -394,7 +443,7 @@ index 86e46b99c..183c25e3b 100644
      return std::nullopt;
  
    return Groups;
-@@ -212,6 +259,26 @@ static ArrayRef<ProcessorGroup> getProcessorGroups() {
+@@ -212,6 +293,26 @@ static ArrayRef<ProcessorGroup> getProcessorGroups() {
    auto computeGroups = []() {
      SmallVector<ProcessorGroup, 4> Groups;
  
@@ -421,7 +470,7 @@ index 86e46b99c..183c25e3b 100644
      auto HandleGroup = [&](SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *ProcInfo) {
        GROUP_RELATIONSHIP &El = ProcInfo->Group;
        for (unsigned J = 0; J < El.ActiveGroupCount; ++J) {
-@@ -340,12 +407,22 @@ void llvm::ThreadPoolStrategy::apply_thread_strategy(
+@@ -340,12 +441,22 @@ void llvm::ThreadPoolStrategy::apply_thread_strategy(
    GROUP_AFFINITY Affinity{};
    Affinity.Group = Groups[*Socket].ID;
    Affinity.Mask = Groups[*Socket].Affinity;
@@ -447,18 +496,20 @@ index 86e46b99c..183c25e3b 100644
    static unsigned All =
        aggregate(getProcessorGroups(),
 diff --git a/llvm/lib/Support/raw_socket_stream.cpp b/llvm/lib/Support/raw_socket_stream.cpp
-index f71631730..662255034 100644
+index f716317..63e2511 100644
 --- a/llvm/lib/Support/raw_socket_stream.cpp
 +++ b/llvm/lib/Support/raw_socket_stream.cpp
-@@ -242,7 +242,21 @@ manageTimeout(const std::chrono::milliseconds &Timeout,
+@@ -242,7 +242,19 @@ manageTimeout(const std::chrono::milliseconds &Timeout,
        RemainingTimeout = Timeout - TotalElapsedTime;
      }
  #ifdef _WIN32
-+#if defined(_WIN32_WINNT) && (_WIN32_WINNT < 0x0600)
-+    // WSAPoll is Vista+; resolve it dynamically so libLLVM still LOADs on
-+    // Windows XP/2000, where a static import would block the DLL from starting.
-+    // The toolchain never uses LLVM's socket support on those hosts, so fail
-+    // soft (function_not_supported) when the export is absent. ws2_32.dll is a
+-    PollStatus = WSAPoll(FD, FDCount, RemainingTimeout.count());
++    // WSAPoll is Vista+; resolve it dynamically (as lib/Support's Path.inc does
++    // for its Vista APIs) so it is NEVER a static import -- otherwise the
++    // monolithic libLLVM DLL, and the llvm-ar/llvm-windres/etc. that link it,
++    // fail to LOAD on Windows XP/2000. Unconditional (not #if-gated) so the host
++    // LLVM build's preprocessor settings cannot defeat it. The toolchain opens
++    // no sockets on those hosts, so failing soft is fine. ws2_32.dll is a
 +    // load-time dependency here (socket/bind/... are imported), so it is mapped.
 +    using WSAPoll_t = int(WSAAPI *)(LPWSAPOLLFD, ULONG, INT);
 +    static WSAPoll_t WSAPollFn = reinterpret_cast<WSAPoll_t>(
@@ -466,14 +517,11 @@ index f71631730..662255034 100644
 +    if (!WSAPollFn)
 +      return std::make_error_code(std::errc::function_not_supported);
 +    PollStatus = WSAPollFn(FD, FDCount, RemainingTimeout.count());
-+#else
-     PollStatus = WSAPoll(FD, FDCount, RemainingTimeout.count());
-+#endif
    } while (PollStatus == SOCKET_ERROR &&
             getLastSocketErrorCode() == std::errc::interrupted);
  #else
 diff --git a/llvm/tools/llvm-ar/llvm-ar.cpp b/llvm/tools/llvm-ar/llvm-ar.cpp
-index 320a903b5..160155fcf 100644
+index 320a903..160155f 100644
 --- a/llvm/tools/llvm-ar/llvm-ar.cpp
 +++ b/llvm/tools/llvm-ar/llvm-ar.cpp
 @@ -567,8 +567,29 @@ static bool comparePaths(StringRef Path1, StringRef Path2) {

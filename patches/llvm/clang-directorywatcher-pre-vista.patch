@@ -5,12 +5,15 @@ Windows XP/2000 this would take clang.exe (which links libclang-cpp) down with
 it. lib/Support's own copy of this call is already resolved dynamically by
 llvm-support-pre-vista.patch, but this clang call site is separate. Resolve it via
 GetProcAddress and skip path canonicalization when absent (the watcher still runs
-via ReadDirectoryChangesW). Self-guarding on _WIN32_WINNT < 0x0600, so it is a
-no-op on Vista+ targets. Only the Windows host compiles this file; a Linux host
-builds DirectoryWatcher-linux.cpp instead.
+via ReadDirectoryChangesW). Done UNCONDITIONALLY, NOT #if-gated on _WIN32_WINNT:
+this file includes llvm/Support/Windows/WindowsSupport.h, which #undefs and pins
+_WIN32_WINNT to 0x0601 (Win7), so a compile-time guard is silently defeated and
+leaves the static import behind (this actually happened -- see the WSAPoll note in
+llvm-support-pre-vista.patch). Only the Windows host compiles this file (a Linux
+host builds DirectoryWatcher-linux.cpp).
 
 diff --git a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
-index 110d40243..038427101 100644
+index 110d402..612f355 100644
 --- a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
 +++ b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
 @@ -87,16 +87,31 @@ DirectoryWatcherWindows::DirectoryWatcherWindows(
@@ -25,23 +28,23 @@ index 110d40243..038427101 100644
 -    if (Size >= 4 && ::memcmp(Data, L"\\\\?\\", 8) == 0) {
 -      Data += 4;
 -      Size -= 4;
-+#if defined(_WIN32_WINNT) && (_WIN32_WINNT < 0x0600)
 +    // GetFinalPathNameByHandleW is Vista+; resolve it dynamically so that
 +    // libclang-cpp.dll still LOADs on Windows XP/2000, where a static import
-+    // would block process startup. When absent, skip canonicalization: the
-+    // watcher still runs via ReadDirectoryChangesW, only Path stays unresolved.
++    // would block the DLL from starting. Done UNCONDITIONALLY (not #if-gated on
++    // _WIN32_WINNT): WindowsSupport.h #undefs and pins _WIN32_WINNT to 0x0601, so
++    // a compile-time guard here is silently defeated and leaves a static import.
++    // When absent, skip canonicalization: the watcher still runs via
++    // ReadDirectoryChangesW, only Path is left unresolved.
 +    using GetFinalPathNameByHandleW_t =
 +        DWORD(WINAPI *)(HANDLE, LPWSTR, DWORD, DWORD);
-+    GetFinalPathNameByHandleW_t GetFinalPathNameByHandleW = nullptr;
++    GetFinalPathNameByHandleW_t pGetFinalPathNameByHandleW = nullptr;
 +    if (HMODULE K = ::GetModuleHandleW(L"kernel32.dll"))
-+      GetFinalPathNameByHandleW = (GetFinalPathNameByHandleW_t)::GetProcAddress(
++      pGetFinalPathNameByHandleW = (GetFinalPathNameByHandleW_t)::GetProcAddress(
 +          K, "GetFinalPathNameByHandleW");
-+    if (GetFinalPathNameByHandleW)
-+#endif
-+    {
-+      DWORD Size = GetFinalPathNameByHandleW(DirectoryHandle, NULL, 0, 0);
++    if (pGetFinalPathNameByHandleW) {
++      DWORD Size = pGetFinalPathNameByHandleW(DirectoryHandle, NULL, 0, 0);
 +      std::unique_ptr<WCHAR[]> Buffer{new WCHAR[Size + 1]};
-+      Size = GetFinalPathNameByHandleW(DirectoryHandle, Buffer.get(), Size, 0);
++      Size = pGetFinalPathNameByHandleW(DirectoryHandle, Buffer.get(), Size, 0);
 +      Buffer[Size] = L'\0';
 +      WCHAR *Data = Buffer.get();
 +      if (Size >= 4 && ::memcmp(Data, L"\\\\?\\", 8) == 0) {
