@@ -20,7 +20,7 @@ SCRIPTNAME=$(basename "$0")
 SCRIPTVER="2.3.0"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-ROOT_PATH="$HERE/build/linux_gcc"
+ROOT_PATH="$HERE/build/win_gcc"
 SRC_PATH="$ROOT_PATH/src"
 BLD_PATH="$ROOT_PATH/bld"
 LOG_FILE="$ROOT_PATH/build.log"
@@ -394,6 +394,15 @@ copy_extra_files() {
   execute "" "Failed to copy mingw.svg" cp -fv ${HERE}/assets/mingw-w64.svg $prefix/mingw.svg
 }
 
+# Build an <arch>-w64-mingw32 toolchain into $2.
+#
+# Two args (arch, prefix) build the normal Linux-hosted cross toolchain --
+# identical to what gcc_linux.sh produces. A third arg of "windows"
+# switches to a Canadian cross: the binutils/gcc/gendef driver binaries are
+# built --host=$arch-w64-mingw32 (so they run on Windows) and statically linked,
+# so the shipped toolchain carries no libgcc/libstdc++/libwinpthread DLL deps.
+# The target libraries (CRT, libgcc, libstdc++, winpthreads) are always compiled
+# for the Windows target by the Phase 1 cross compiler that build() left on PATH.
 # --incremental helper: reset the (kept) git source trees to pristine and re-apply
 # every patch, so edits to a .patch take effect -- but keep the mtime of any file
 # whose re-patched content is byte-identical to before, so the build tool recompiles
@@ -435,31 +444,66 @@ reapply_patches_incremental() {
   rm -f "$manifest"
 }
 
-build() {
+build_toolchain() {
   if [ "$WIN32_WINNT" != "0" ]; then
     export _WIN32_WINNT=$WIN32_WINNT
   else
     error_exit "WIN32_WINNT should not be 0!"
   fi
 
-  if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
-    # Only report this on a genuine --cached-sources re-run; during a fresh
-    # multi-arch build the sentinel just carries between archs silently.
-    [ "$CACHED_SOURCES" ] && printf "${bold}Already applied patches.${c0}\n"
-  else
-    apply_patches || error_exit "Failed to apply patches"
-  fi
-
   log "${GRE}Starting build using $JOB_COUNT jobs.${c0}\n"
 
   local arch="$1"
   local prefix="$2"
+  local windows_host="$3"
   shift 2
+
+  # Apply patches only during Phase 1 (the Linux-hosted pass). Phase 2 reuses the
+  # same already-patched source tree, so re-running this check there would just
+  # print a spurious "Already applied patches" on every stage-2 build. The notice
+  # itself is kept only for genuine --cached-sources re-runs.
+  if [ "$windows_host" != "windows" ]; then
+    if [[ -f "$SRC_PATH/patches/applied_patches" ]]; then
+      [ "$CACHED_SOURCES" ] && printf "${bold}Already applied patches.${c0}\n"
+    else
+      apply_patches || error_exit "Failed to apply patches"
+    fi
+  fi
 
   local bld_path="$BLD_PATH/$arch"
   local host="$arch-w64-mingw32"
 
-  export PATH="$prefix/bin:$PATH"
+  # Canadian-cross knobs: empty for the Linux-hosted build, populated when
+  # producing the Windows-hosted toolchain. CROSS_FLAGS makes binutils/gcc build
+  # host binaries that run on Windows; GENDEF_HOST does the same for gendef
+  # (which already passes its own --build); EXE_EXT names the resulting tools.
+  local CROSS_FLAGS="" GENDEF_HOST="" EXE_EXT="" host_label="Linux-hosted"
+  # GDB is built only in the Windows-hosted (deliverable) pass -- a throwaway
+  # Phase-1 gdb would just cost build time, and the Linux-hosted cross GDB is
+  # produced by gcc_linux.sh instead. Windows-specific knobs:
+  #   --disable-tui    : the TUI needs a curses lib mingw doesn't ship.
+  #   --without-expat  : XML target descriptions need a static, XP-safe expat
+  #                      cross-built for the target (deferred -- same pattern as
+  #                      the LLVM libxml2 case); GDB still works without it.
+  #   --without-python / --disable-gdbserver / --disable-werror : as in the
+  #                      Linux script. GMP (gdb's hard requirement) builds
+  #                      in-tree for the target host via the gmp/mpfr symlinks.
+  local GDB_FLAGS="--disable-gdb"
+  if [ "$windows_host" = "windows" ]; then
+    CROSS_FLAGS="--build=$BUILD --host=$host"
+    GENDEF_HOST="--host=$host"
+    EXE_EXT=".exe"
+    host_label="Windows-hosted"
+    GDB_FLAGS="--enable-gdb --disable-gdbserver --disable-tui --without-python --without-expat --disable-werror"
+  fi
+
+  # The Linux-hosted build puts its own bin/ on PATH so the freshly built
+  # $arch-w64-mingw32-* tools drive the later steps. The Windows-hosted build
+  # must NOT prepend its prefix -- those are Windows .exe binaries that can't run
+  # here; it relies on the Phase 1 cross already on PATH from build().
+  if [ -z "$windows_host" ]; then
+    export PATH="$prefix/bin:$PATH"
+  fi
 
   # --incremental keeps the existing build tree + prefix so the build resumes where
   # it left off; only wipe them on a normal build.
@@ -490,6 +534,13 @@ build() {
   fi
   # TARGET_LDFLAGS starts from the strip setting; arch blocks may append to it
   local TARGET_LDFLAGS="$STRIP_FLAG"
+  # Statically link the host C++/gcc runtime so the toolchain binaries don't rely
+  # on the machine's libstdc++/libgcc (matches gcc_linux.sh). The
+  # Windows-hosted build adds -static for fully self-contained .exe binaries.
+  local HOST_STATIC="-static-libgcc -static-libstdc++"
+  if [ "$windows_host" = "windows" ]; then
+    HOST_STATIC="-static $HOST_STATIC"
+  fi
   if [ "$arch" = "i586" ]; then
     local SIMD_FLAGS="-mfpmath=387"
     local MARCH=""
@@ -590,11 +641,12 @@ USE_AVX512=$avx512"
   fi
   local TARGET_CXXFLAGS="$TARGET_CFLAGS"
 
-  # HOST_CFLAGS are used to build tools that run on the build machine
-  # (binutils, the gcc driver, gendef).
+  # HOST_CFLAGS are used to build the toolchain tools themselves (binutils, the
+  # gcc driver, gendef) -- which run on the build machine in Phase 1 and on the
+  # Windows host in Phase 2.
   local HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe -D_WIN32_WINNT=$WIN32_WINNT"
   local HOST_CXXFLAGS="$HOST_CFLAGS"
-  local HOST_LDFLAGS="-static-libgcc -static-libstdc++ $STRIP_FLAG"
+  local HOST_LDFLAGS="$HOST_STATIC $STRIP_FLAG"
 
   if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then
     # Causes top level configure warnings: Ignore, they are harmless
@@ -611,6 +663,7 @@ USE_AVX512=$avx512"
     VFLAGS+=" VERBOSE=1 V=1"
   fi
 
+  log "${CYA}HOST           = ${bold}$host_label ${c0}\n"
   log "${CYA}HOST_CFLAGS    = ${bold}$HOST_CFLAGS ${c0}\n"
   log "${CYA}HOST_LDFLAGS   = ${bold}$HOST_LDFLAGS ${c0}\n"
   log "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
@@ -622,29 +675,24 @@ USE_AVX512=$avx512"
   create_dir "$bld_path/binutils" &&
   change_dir "$bld_path/binutils" &&
 
-  # binutils + a cross GDB (e.g. i686-w64-mingw32-gdb) from the unified
-  # binutils-gdb tree. GDB requires GMP, which is already provided in-tree via
-  # the gmp/mpfr symlinks (download_gcc_deps). This builds a Linux-hosted
-  # cross-debugger; the Windows-hosted GDB is handled in mingw_gcc_win.sh.
-  #   --without-python    : no host libpython runtime coupling (no
-  #                         pretty-printers for now) -- keeps the toolchain
-  #                         portable.
-  #   --disable-gdbserver : a host (Linux) gdbserver is useless for debugging
-  #                         Windows targets.
-  #   --disable-werror    : GDB does not compile cleanly under modern GCC.
-  # expat (XML target descriptions) and ncurses (readline/TUI) are picked up
-  # from the host if present (see install_deps); GDB degrades gracefully without.
-  execute "($arch): Configuring Binutils + GDB" "" \
+  # --program-prefix forces the $host- prefix on the installed tool names. The
+  # pure-cross Linux build gets this automatically (host != target), but Phase 2
+  # has --host == --target, which GNU configure treats as native and would leave
+  # the tools unprefixed (windres, ar, ...). Setting it explicitly keeps bin/
+  # carrying a single prefixed copy of each tool (no duplication); gcc still finds
+  # plain as/ld via the target tooldir ($prefix/$host/bin), exactly as the Linux
+  # build does.
+  execute "($arch): Configuring Binutils" "" \
       "$SRC_PATH/binutils/configure" --prefix="$prefix" --disable-shared \
       --enable-static --with-sysroot="$prefix" --target="$host" \
-      --disable-multilib --disable-nls --enable-lto \
-      --enable-gdb --disable-gdbserver --without-python --disable-werror \
+      --program-prefix="$host-" \
+      --disable-multilib --disable-nls --enable-lto $GDB_FLAGS $CROSS_FLAGS \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
-  execute "($arch): Building Binutils + GDB" "" \
+  execute "($arch): Building Binutils" "" \
       make -j $JOB_COUNT $VFLAGS
 
-  execute "($arch): Installing Binutils + GDB" "" \
+  execute "($arch): Installing Binutils" "" \
       make install $VFLAGS
 
   # --disable-shared builds binutils' "libdep" plugin (lets a static .a declare
@@ -676,7 +724,7 @@ USE_AVX512=$avx512"
   execute "($arch): Configuring GCC with arch: $MARCH" "Configuring GCC failed" \
       "$SRC_PATH/gcc/configure" --target="$host" --disable-shared \
       --enable-static --disable-multilib --prefix="$prefix" \
-      --enable-languages=c,c++ --disable-nls $ENABLE_THREADS $GCC_FLAGS \
+      --enable-languages=c,c++ --disable-nls $ENABLE_THREADS $GCC_FLAGS $CROSS_FLAGS \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS" \
       CFLAGS_FOR_TARGET="$TARGET_CFLAGS" CXXFLAGS_FOR_TARGET="$TARGET_CXXFLAGS" \
       LDFLAGS_FOR_TARGET="$TARGET_LDFLAGS"
@@ -707,13 +755,13 @@ USE_AVX512=$avx512"
 
   execute "($arch): Configuring MinGW gendef" "Configuring gendef failed" \
       "$SRC_PATH/mingw-w64/mingw-w64-tools/gendef/configure" --build="$BUILD" \
-      --prefix="$prefix/$host" \
+      --prefix="$prefix/$host" $GENDEF_HOST \
       CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
   execute "($arch): Building MinGW gendef" "Building gendef failed" \
       make -j $JOB_COUNT $VFLAGS
   execute "($arch): Installing MinGW gendef" "Installing gendef failed" \
-      cp -v gendef $prefix/bin
+      cp -v "gendef$EXE_EXT" "$prefix/bin"
 
   if [ "$ENABLE_THREADS" ]; then
     create_dir "$bld_path/mingw-w64-winpthreads"
@@ -739,28 +787,53 @@ USE_AVX512=$avx512"
   execute "($arch): Installing final GCC + libs" "Installing final GCC failed" \
       make install $VFLAGS
 
-  # Host-side utilities from assets/src, dropped in bin/ like gendef and built
-  # LAST. Native (Linux-hosted) binaries; capped at C17 (-std=gnu17) so they build
-  # on Ubuntu 22.04 / gcc 11. pkg-config is Windows-only (every Linux distro ships
-  # one), so it is omitted from the Linux toolchains.
-  local _t _n _src _xf
-  for _t in "peports:peports.c" "xxd:rexxd.c" "uuidgen:uuidgen.c"; do
-    _n=${_t%%:*}; _src=${_t#*:}; _xf=""; [ "$_n" = xxd ] && _xf="-funroll-loops"
-    execute "($arch): Building host tool $_n" "Building $_n failed" \
-        cc -std=gnu17 $OPT_FLAGS $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n"
-  done
-
-  copy_extra_files "$arch" "$prefix"
+  # Only the Windows-hosted deliverable gets the custom MSVC-compat headers.
+  # Skipping Phase 1 keeps its throwaway cross compiler's sysroot 100% stock, so
+  # Phase 2's target libs are built against stock mingw-w64 headers.
+  if [ "$windows_host" = "windows" ]; then
+    # Host-side utilities from assets/src -> bin/ as Windows .exe, like gendef.exe.
+    # Built LAST with the Phase 1 cross gcc + the arch SIMD baseline (HOST_CFLAGS,
+    # so they run on the target CPU floor), -municode (they use a Unicode wmain
+    # entry), capped at C17 (-std=gnu17) for Ubuntu 22.04 / gcc 11.
+    local _t _n _src _xf
+    for _t in "peports:peports.c" "pkg-config:pkg-config.c" "xxd:rexxd.c" "uuidgen:uuidgen.c"; do
+      _n=${_t%%:*}; _src=${_t#*:}; _xf=""; [ "$_n" = xxd ] && _xf="-funroll-loops"
+      execute "($arch): Building host tool $_n.exe" "Building $_n failed" \
+          "$host-gcc" -municode $HOST_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
+    done
+    copy_extra_files "$arch" "$prefix"
+  fi
   write_version_file "$arch" "$prefix" "$VERSION_FLAGS"
-  log "${GRE}Done building for arch ${CYA}$arch ${c0}\n"
+  log "${GRE}Done building $host_label toolchain for ${CYA}$arch ${c0}\n"
 }
 
-# Zip an arch's install prefix into <root>/<pkgname>.zip. pkgname matches the
-# prefix dir name, so the archive carries a matching top-level folder. -y stores
-# symlinks AS symlinks instead of dereferencing each into a full duplicate copy,
-# keeping the archive compact; the Linux-hosted toolchain's symlinks are recreated
-# by unzip on Linux. (Windows-hosted builds deliberately omit -y - Windows can't
-# use symlinks, so there they must be materialized into real copies.)
+# Build a Windows-hosted toolchain for $arch via a two-phase Canadian cross.
+# Phase 1 builds a Linux-hosted cross toolchain into an intermediate prefix and
+# leaves its bin/ on PATH (the build->host and build->target compiler). Phase 2
+# reuses those $arch-w64-mingw32-* tools to cross-compile the Windows-hosted
+# toolchain (binutils/gcc/gendef --host=$arch-w64-mingw32, statically linked)
+# into $prefix.
+build() {
+  local arch="$1"
+  local prefix="$2"
+  shift 2
+
+  # Phase 1: Linux-hosted cross toolchain into an intermediate prefix.
+  # build_toolchain() adds its bin/ to PATH, exposing $arch-w64-mingw32-* tools.
+  local linux_prefix="$ROOT_PATH/linux-cross/$arch"
+  log "${GRE}=== ($arch) Starting Phase 1: Linux-hosted cross toolchain ===${c0}\n"
+  build_toolchain "$arch" "$linux_prefix"
+
+  # Phase 2: Canadian-cross the Windows-hosted toolchain into $prefix, driven by
+  # the phase-1 $arch-w64-mingw32-* tools now on PATH.
+  log "${GRE}=== ($arch) Starting Phase 2: Windows-hosted toolchain ===${c0}\n"
+  build_toolchain "$arch" "$prefix" windows
+}
+
+# Zip an arch's install prefix into <root>/<pkgname>.zip. The 64-bit build is
+# packaged as x64.zip even though its prefix dir is x86_64; to give the archive a
+# matching top-level folder we stage a hardlink tree (cheap, no extra disk, and
+# leaves the original prefix untouched).
 package_arch() {
   local arch="$1" pkgname="$2"
   local dir="$ROOT_PATH/$arch"
@@ -770,13 +843,13 @@ package_arch() {
   rm -f "$pkgname.zip"
   if [ "$arch" = "$pkgname" ]; then
     execute "Packaging ${pkgname}.zip..." "Failed to create ${pkgname}.zip" \
-        zip -r -q -y "$pkgname.zip" "$arch"
+        zip -r -q "$pkgname.zip" "$arch"
   else
     remove_path "$pkgname"
     execute "Running cp -al" "Failed to stage '$pkgname'" \
         cp -al "$arch" "$pkgname"
     execute "Packaging ${pkgname}.zip..." "Failed to create ${pkgname}.zip" \
-        zip -r -q -y "$pkgname.zip" "$pkgname"
+        zip -r -q "$pkgname.zip" "$pkgname"
     remove_path "$pkgname"
   fi
 }
@@ -791,13 +864,10 @@ install_deps() {
 
   printf "${GRE}Installing dependencies for $SCRIPTNAME...${c0}\n"
   # build-essential: gcc, g++, make. The rest provide the remaining tools the
-  # missing-executable check requires, plus zip for --package. libexpat1-dev and
-  # libncurses-dev give the cross GDB its XML target-description and
-  # readline/TUI support (GDB still builds without them, just degraded).
+  # missing-executable check requires, plus zip for --package.
   $sudo apt-get update || error_exit "apt-get update failed"
   $sudo apt-get install -y \
       build-essential flex bison texinfo m4 bzip2 git curl zip autoconf diffutils \
-      libexpat1-dev libncurses-dev \
       || error_exit "Failed to install dependencies"
   printf "${GRE}Done installing dependencies!${c0}\n"
 }
@@ -1128,14 +1198,18 @@ if [ ! "$CACHED_SOURCES" ]; then
   TOTAL_STEPS=$((TOTAL_STEPS + 4))
 fi
 
+# Each arch runs the full sequence twice (Phase 1 Linux-hosted + Phase 2
+# Windows-hosted), so per-arch step counts are doubled relative to the
+# single-phase Linux build script: 3 winpthreads steps and 16 build steps
+# per phase.
 if [ "$ENABLE_THREADS" ]; then
-  THREADS_STEPS=3
+  THREADS_STEPS=$((3 * 2))
 else
   THREADS_STEPS=0
 fi
 
 THREADS_STEPS=$((THREADS_STEPS * NUM_BUILDS))
-BUILD_STEPS=$((19 * NUM_BUILDS))
+BUILD_STEPS=$(( (16 * 2 + 4) * NUM_BUILDS ))
 
 # one GCC-prerequisites download step (runs once, not per-arch): always on a
 # fresh clone, or on cached sources only if they aren't already present
@@ -1267,12 +1341,16 @@ if [ ! "$KEEP_ARTIFACTS" ]; then
     remove_path "$SRC_PATH"
   fi
   remove_path "$BLD_PATH"
+  # the Phase 1 Linux-hosted toolchains are only an intermediate used to drive
+  # the Canadian cross; drop them unless the user asked to keep artifacts
+  remove_path "$ROOT_PATH/linux-cross"
   # keep build.log: it's the record of the build, and --clean preserves it as build.log.old
 fi
 
-printf "${GRE}Done! \n${c0}To use MinGW-w64 everywhere add these to your \$PATH: \n"
+printf "${GRE}Done! \n${c0}Built Windows-hosted toolchain(s) at: \n"
 for add_to_path in "${ADD_TO_PATH[@]}"; do
   printf "${bold}%s ${c0}\n" "$add_to_path"
 done
+printf "${c0}Copy the prefix to a Windows machine and add its ${bold}bin\\\\${c0} to PATH.\n"
 
 exit 0

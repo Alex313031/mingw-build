@@ -17,10 +17,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # Windows-HOSTED LLVM/Clang variant. This is the Canadian-cross counterpart of
-# mingw_llvm_linux.sh: it runs on Linux but produces a MinGW-w64 + LLVM
+# llvm_linux.sh: it runs on Linux but produces a MinGW-w64 + LLVM
 # toolchain whose driver binaries (clang.exe, lld, the llvm-* tools, gendef.exe)
-# RUN ON WINDOWS, exactly as mingw_gcc_win.sh is the Windows-hosted counterpart
-# of mingw_gcc_linux.sh for the GCC flavor.
+# RUN ON WINDOWS, exactly as gcc_win.sh is the Windows-hosted counterpart
+# of gcc_linux.sh for the GCC flavor.
 #
 # Two phases per arch:
 #   Phase 1 - build a normal Linux-hosted llvm-mingw toolchain (clang/lld + all
@@ -726,7 +726,7 @@ USE_AVX512=$avx512"
 }
 
 # PHASE 1: build a normal Linux-hosted llvm-mingw toolchain into $2 -- byte-for-
-# byte what mingw_llvm_linux.sh produces. This is the intermediate that
+# byte what llvm_linux.sh produces. This is the intermediate that
 # drives the Canadian cross: its clang/lld compile Phase 2, its build-tree
 # llvm-tblgen/clang-tblgen feed the LLVM cross-build, and its target runtimes
 # (compiler-rt/libunwind/libc++/CRT/winpthreads) are reused verbatim by Phase 2.
@@ -1006,7 +1006,7 @@ build_phase2_windows() {
   # toolchain) is trimmed; Phase 1 stays a full install since it is the bootstrap
   # compiler used to cross-build Phase 2.
   #
-  # ASYMMETRY: unlike the Linux-hosted toolchain (mingw_llvm_linux.sh), this list
+  # ASYMMETRY: unlike the Linux-hosted toolchain (llvm_linux.sh), this list
   # has NO llvm-mt. llvm-mt (the Windows manifest tool) needs libxml2, which is
   # OFF here (LLVM_ENABLE_LIBXML2=OFF below): the host's libxml2 is a Linux .so
   # and can't link into a static Windows .exe, and cross-building a static,
@@ -1285,7 +1285,7 @@ install_deps() {
   # build-essential's g++ is sufficient. libxml2-dev isn't used by this script
   # today (the Windows-hosted toolchain keeps LLVM_ENABLE_LIBXML2=OFF and omits
   # llvm-mt -- see the llvm_dist note in build()); it's installed for parity with
-  # mingw_llvm_linux.sh and in case a future static/XP-safe libxml2 path enables
+  # llvm_linux.sh and in case a future static/XP-safe libxml2 path enables
   # llvm-mt here too.
   $sudo apt-get update || error_exit "apt-get update failed"
   $sudo apt-get install -y \

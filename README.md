@@ -8,10 +8,10 @@ The Windows-hosted builds also *run* on those old versions (down to 2000), not j
 
 It currently contains four bash scripts, that can be run on Ubuntu or Debian:  
 
-`mingw_gcc_linux.sh`:  Creates a MinGW/GCC build that runs on Linux.  
-`mingw_gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.  
-`mingw_llvm_linux.sh`: Creates a MinGW/LLVM build that runs on Linux.  
-`mingw_llvm_win.sh`:   Creates a MinGW/LLVM build that runs on Windows.  
+`gcc_linux.sh`:  Creates a MinGW/GCC build that runs on Linux.  
+`gcc_win.sh`:    Creates a MinGW/GCC build that runs on Windows.  
+`llvm_linux.sh`: Creates a MinGW/LLVM build that runs on Linux.  
+`llvm_win.sh`:   Creates a MinGW/LLVM build that runs on Windows.  
 
 The GCC toolchains also bundle [GDB](https://sourceware.org/gdb/) for source-level debugging (a cross-debugger in the Linux builds, `gdb.exe` in the Windows builds).  
 
@@ -57,6 +57,7 @@ Some common options are:
 `--package` - Package the build(s) into .zip files, ready for distribution.  
 `--deps` - Install build deps like zip, make, autoconf, curl, etc.  
 `--clean` - Nuke all sources and build output.  
+`--incremental` - Fast rebuild loop for iterating on patches: reuses existing sources/build/prefix, re-applies patches, and rebuilds only what changed (implies `-c` and `--keep-artifacts`).  
 `--debug` - Make a debug build instead of a release build, for debugging issues in the CRT itself.  
 `--verbose` - Verbose logging output  
 `--jobs` - Adjust number of concurrent build jobs (default is num. CPUs)  

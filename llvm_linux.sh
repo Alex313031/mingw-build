@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-# LLVM/Clang variant of mingw_gcc_linux.sh. Instead of GCC + binutils this
+# LLVM/Clang variant of gcc_linux.sh. Instead of GCC + binutils this
 # builds a self-contained MinGW-w64 toolchain around LLVM: clang (compiler),
 # lld (linker), the LLVM binutils-style tools, compiler-rt (builtins, replaces
 # libgcc), libunwind + libc++abi + libc++ (replaces libstdc++), and the unchanged
@@ -725,7 +725,7 @@ USE_AVX512=$avx512"
   # ASYMMETRY: this Linux-hosted toolchain ships llvm-mt (the Windows manifest
   # tool), which needs libxml2. The host's libxml2 is fine here because these are
   # native Linux binaries (LLVM_ENABLE_LIBXML2=FORCE_ON below; libxml2-dev is in
-  # --deps). The Windows-hosted toolchain (mingw_llvm_win.sh) deliberately does
+  # --deps). The Windows-hosted toolchain (llvm_win.sh) deliberately does
   # NOT ship llvm-mt: a host .so can't link into its static Windows .exe, and
   # cross-building a static, XP-safe libxml2 isn't worth it for one rarely-used
   # tool. So llvm-mt is the one distribution component that differs between the
