@@ -1,0 +1,141 @@
+Lets LLVM Support code see the caller's (low, legacy) _WIN32_WINNT in the code
+body while the Windows headers are still processed at 0x0601, so LLVM's own
+compile-time `#if _WIN32_WINNT` guards evaluate against the real target instead
+of a forced Win7 floor.
+
+  WindowsSupport.h: upstream unconditionally forced _WIN32_WINNT to 0x0601
+  (needed because LLVM Support uses Win7 APIs). Instead, push_macro to save the
+  caller's value, force 0x0601 across the windows.h/wincrypt.h includes so the
+  Win7 declarations are visible, then pop_macro to restore the caller's value for
+  the rest of the translation unit.
+
+  Because the pop restores the low floor, any Support file that pulls in MORE
+  Windows headers AFTER WindowsSupport.h must re-pin 0x0601 across those includes
+  or lose the Vista+ declarations they need:
+    - Path.inc: shlobj.h / shellapi.h / winioctl.h (Vista shell + known-folder
+      types).
+    - raw_socket_stream.cpp: winsock2.h (pollfd / WSAPOLLFD / POLLIN / WSAPoll are
+      Vista+; without the re-pin the file fails to compile).
+
+  DIASupport.h and lldb/Host/windows/windows.h: lower their hard-coded Vista
+  floor to XP (NTDDI_VISTA -> NTDDI_XP, _WIN32_WINNT_VISTA -> _WIN32_WINNT_XP).
+  Neither is built in this toolchain (DIA needs the MSVC DIA SDK; lldb is not in
+  LLVM_ENABLE_PROJECTS) -- included for correctness if ever enabled.
+
+  NOTE: this is a maintenance-heavy approach -- every future Support file that
+  includes extra Windows headers past WindowsSupport.h needs the same re-pin.
+  The alternative for individual Vista+ imports is unconditional GetProcAddress
+  resolution (see llvm-support-pre-vista.patch), which needs none of this.
+
+diff --git a/lldb/include/lldb/Host/windows/windows.h b/lldb/include/lldb/Host/windows/windows.h
+index d53d4b996..e65ed95e7 100644
+--- a/lldb/include/lldb/Host/windows/windows.h
++++ b/lldb/include/lldb/Host/windows/windows.h
+@@ -9,9 +9,10 @@
+ #ifndef LLDB_lldb_windows_h_
+ #define LLDB_lldb_windows_h_
+ 
+-#define NTDDI_VERSION NTDDI_VISTA
++// Set to XP, lower than default
++#define NTDDI_VERSION NTDDI_XP
+ #undef _WIN32_WINNT // undef a previous definition to avoid warning
+-#define _WIN32_WINNT _WIN32_WINNT_VISTA
++#define _WIN32_WINNT _WIN32_WINNT_XP
+ #define WIN32_LEAN_AND_MEAN
+ #define NOGDI
+ #undef NOMINMAX // undef a previous definition to avoid warning
+diff --git a/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h b/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
+index 570b40c..cbd713a 100644
+--- a/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
++++ b/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
+@@ -13,10 +13,10 @@
+ #ifndef LLVM_DEBUGINFO_PDB_DIA_DIASUPPORT_H
+ #define LLVM_DEBUGINFO_PDB_DIA_DIASUPPORT_H
+ 
+-// Require at least Vista
+-#define NTDDI_VERSION NTDDI_VISTA
+-#define _WIN32_WINNT _WIN32_WINNT_VISTA
+-#define WINVER _WIN32_WINNT_VISTA
++// Require at least XP
++#define NTDDI_VERSION NTDDI_XP
++#define _WIN32_WINNT _WIN32_WINNT_XP
++#define WINVER _WIN32_WINNT_XP
+ #ifndef NOMINMAX
+ #define NOMINMAX
+ #endif
+diff --git a/llvm/include/llvm/Support/Windows/WindowsSupport.h b/llvm/include/llvm/Support/Windows/WindowsSupport.h
+index 50a2540..89c5fae 100644
+--- a/llvm/include/llvm/Support/Windows/WindowsSupport.h
++++ b/llvm/include/llvm/Support/Windows/WindowsSupport.h
+@@ -21,10 +21,11 @@
+ #ifndef LLVM_SUPPORT_WINDOWSSUPPORT_H
+ #define LLVM_SUPPORT_WINDOWSSUPPORT_H
+ 
+-// mingw-w64 tends to define it as 0x0502 in its headers.
++// Save the caller's _WIN32_WINNT, then force 0x0601 so the Windows headers
++// below declare the Win7 APIs LLVM's Support code uses. Restored via pop_macro
++// right after the includes, so the rest of the TU sees the caller's target.
++#pragma push_macro("_WIN32_WINNT")
+ #undef _WIN32_WINNT
+-
+-// Require at least Windows 7 API.
+ #define _WIN32_WINNT 0x0601
+ #define WIN32_LEAN_AND_MEAN
+ #ifndef NOMINMAX
+@@ -49,6 +50,9 @@
+ // Must be included after windows.h
+ #include <wincrypt.h>
+ 
++// Restore the caller's _WIN32_WINNT now that the Windows headers are included.
++#pragma pop_macro("_WIN32_WINNT")
++
+ namespace llvm {
+ 
+ /// Determines if the program is running on Windows 8 or newer. This
+diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
+index 97dd75a..cd92ff2 100644
+--- a/llvm/lib/Support/Windows/Path.inc
++++ b/llvm/lib/Support/Windows/Path.inc
+@@ -23,13 +23,20 @@
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ 
+-// These two headers must be included last, and make sure shlobj is required
+-// after Windows.h to make sure it picks up our definition of _WIN32_WINNT
+ #include "llvm/Support/Windows/WindowsSupport.h"
++
++// Needs same guard as WindowsSupport.h
++#pragma push_macro("_WIN32_WINNT")
++#undef _WIN32_WINNT
++#define _WIN32_WINNT 0x0601
++
+ #include <shellapi.h>
+ #include <shlobj.h>
+ #include <winioctl.h>
+ 
++// Restore the caller's _WIN32_WINNT now that the Windows headers are included.
++#pragma pop_macro("_WIN32_WINNT")
++
+ #undef max
+ 
+ // MinGW doesn't define this.
+diff --git a/llvm/lib/Support/raw_socket_stream.cpp b/llvm/lib/Support/raw_socket_stream.cpp
+index f716317..2a02dd5 100644
+--- a/llvm/lib/Support/raw_socket_stream.cpp
++++ b/llvm/lib/Support/raw_socket_stream.cpp
+@@ -29,8 +29,15 @@
+ // winsock2.h must be included before afunix.h. Briefly turn off clang-format to
+ // avoid error.
+ // clang-format off
++// WSAPoll and the pollfd / WSAPOLLFD / POLLIN types are Vista+ (guarded on
++// _WIN32_WINNT >= 0x0600) in winsock2.h. WindowsSupport.h restores the caller's
++// lower target, so re-pin 0x0601 across these includes, then restore.
++#pragma push_macro("_WIN32_WINNT")
++#undef _WIN32_WINNT
++#define _WIN32_WINNT 0x0601
+ #include <winsock2.h>
+ #include <afunix.h>
++#pragma pop_macro("_WIN32_WINNT")
+ // clang-format on
+ #include <io.h>
+ #endif // _WIN32

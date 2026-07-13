@@ -1,0 +1,35 @@
+libunwind's findUnwindSections (DWARF unwind path, AddressSpace.hpp) calls
+EnumProcessModules to enumerate loaded modules. EnumProcessModules itself is
+NT4+, but a STATIC reference to it forces the linker to pull psapi in; because
+libunwind is added last on the link line (after the driver's default libs), the
+mingw LLVM build had to force psapi with `-Wl,--whole-archive -lpsapi`, which
+drags in EVERY psapi export -- including Vista+ ones (EnumProcessModulesEx,
+QueryWorkingSetEx, GetWsChangesEx) that Windows XP's psapi.dll does not have, so
+the tools fail to LOAD on XP. Resolve EnumProcessModules dynamically (GetProcAddress)
+so libunwind carries no static psapi import; the build can then
+link plain `-lpsapi` at the end of the line and pull only the two psapi symbols
+actually referenced (EnumProcessModules, GetProcessMemoryInfo, both NT4+).
+Applies to host tools and to the target libunwind alike (works on every NT).
+
+diff --git a/libunwind/src/AddressSpace.hpp b/libunwind/src/AddressSpace.hpp
+index 3711189f5..6577ac906 100644
+--- a/libunwind/src/AddressSpace.hpp
++++ b/libunwind/src/AddressSpace.hpp
+@@ -561,7 +561,16 @@ inline bool LocalAddressSpace::findUnwindSections(
+   HANDLE process = GetCurrentProcess();
+   DWORD needed;
+ 
+-  if (!EnumProcessModules(process, mods, sizeof(mods), &needed)) {
++  // EnumProcessModules lives in psapi.dll (NT4+). Resolve it dynamically so
++  // libunwind carries no static psapi import; a force-linked psapi otherwise
++  // drags in Vista+ psapi symbols and breaks loading on Windows XP/2000.
++  typedef BOOL(WINAPI * EnumProcessModules_t)(HANDLE, HMODULE *, DWORD, LPDWORD);
++  static EnumProcessModules_t EnumProcessModulesFn =
++      reinterpret_cast<EnumProcessModules_t>(::GetProcAddress(
++          ::LoadLibraryW(L"psapi.dll"), "EnumProcessModules"));
++
++  if (!EnumProcessModulesFn ||
++      !EnumProcessModulesFn(process, mods, sizeof(mods), &needed)) {
+     DWORD err = GetLastError();
+     _LIBUNWIND_TRACE_UNWINDING("findUnwindSections: EnumProcessModules failed, "
+                                "returned error %d", (int)err);

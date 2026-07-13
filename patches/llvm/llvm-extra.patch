@@ -1,0 +1,267 @@
+Adds runtime Windows host-OS detection to llvm/Support and logs it in the
+clang/lld --version output. (The _WIN32_WINNT header handling these functions
+rely on lives in its own patch, llvm-win32-winnt-guard.patch.)
+
+  WindowsSupport.h / Windows/Process.inc: OS-version predicates built on the
+  existing GetWindowsOSVersion() -- IsLegacyWindows / IsSupportedWindows /
+  RunningWindows{2K,XP,Vista,7,10}OrGreater (8/11 already exist upstream) -- plus
+  GetWindowsOSName(), a human-readable "Windows XP 5.1.2600"-style string. These
+  read the ACTUAL host version at run time, for BEHAVIORAL gating and diagnostics
+  only; they do NOT fix load-time static-import failures (see
+  llvm-support-pre-vista.patch for those).
+
+  Process.h: re-declares the two public entry points (IsSupportedWindows,
+  GetWindowsOSName) so cross-platform callers (clang/lld drivers) can reach them
+  without pulling in the internal, windows.h-heavy WindowsSupport.h. Guarded and
+  defined Windows-host-only, so every caller wraps use in #ifdef _WIN32.
+
+  clang Driver.cpp + lld MinGW/COFF drivers: print the host OS line in --version
+  (#ifdef _WIN32). For lld this is done at the print sites, NOT inside
+  getLLDVersion(), because that string is also embedded into output binaries'
+  .comment section, reproducer archives, and dep files.
+
+  Windows-host feature; unused on Linux/Mac hosts (Windows/Process.inc is not
+  compiled there).
+
+diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
+index eb3f9cb..784c356 100644
+--- a/clang/lib/Driver/Driver.cpp
++++ b/clang/lib/Driver/Driver.cpp
+@@ -2352,6 +2352,13 @@ void Driver::PrintVersion(const Compilation &C, raw_ostream &OS) const {
+   // If configuration files were used, print their paths.
+   for (auto ConfigFile : ConfigFiles)
+     OS << "Configuration file: " << ConfigFile << '\n';
++#ifdef _WIN32
++  if (!llvm::IsSupportedWindows()) {
++    OS << "Note: Unsupported Windows version: " << llvm::GetWindowsOSName() << '\n';
++  } else {
++    OS << "Running on: " << llvm::GetWindowsOSName() << '\n';
++  }
++#endif
+ }
+ 
+ /// PrintDiagnosticCategories - Implement the --print-diagnostic-categories
+diff --git a/lld/COFF/Driver.cpp b/lld/COFF/Driver.cpp
+index ec18756..7ac3515 100644
+--- a/lld/COFF/Driver.cpp
++++ b/lld/COFF/Driver.cpp
+@@ -1644,6 +1644,9 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
+   // avoid conflict with /version and for compatibility with clang-cl.
+   if (args.hasArg(OPT_dash_dash_version)) {
+     Msg(ctx) << getLLDVersion();
++#ifdef _WIN32
++    Msg(ctx) << ("Running on: " + llvm::GetWindowsOSName());
++#endif
+     return;
+   }
+ 
+diff --git a/lld/MinGW/Driver.cpp b/lld/MinGW/Driver.cpp
+index 7063957..67f42e5 100644
+--- a/lld/MinGW/Driver.cpp
++++ b/lld/MinGW/Driver.cpp
+@@ -41,6 +41,7 @@
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/FileSystem.h"
+ #include "llvm/Support/Path.h"
++#include "llvm/Support/Process.h"
+ #include "llvm/TargetParser/Host.h"
+ #include "llvm/TargetParser/Triple.h"
+ #include <optional>
+@@ -210,8 +211,12 @@ bool link(ArrayRef<const char *> argsArr, llvm::raw_ostream &stdoutOS,
+   // still the newest version in March 2017) or earlier to recognize LLD as
+   // a GNU compatible linker. As long as an output for the -v option
+   // contains "GNU" or "with BFD", they recognize us as GNU-compatible.
+-  if (args.hasArg(OPT_v) || args.hasArg(OPT_version))
++  if (args.hasArg(OPT_v) || args.hasArg(OPT_version)) {
+     message(getLLDVersion() + " (compatible with GNU linkers)");
++#ifdef _WIN32
++    message("Running on: " + llvm::GetWindowsOSName());
++#endif
++  }
+ 
+   // The behavior of -v or --version is a bit strange, but this is
+   // needed for compatibility with GNU linkers.
+diff --git a/llvm/include/llvm/Support/Process.h b/llvm/include/llvm/Support/Process.h
+index f644fe7..78bfe11 100644
+--- a/llvm/include/llvm/Support/Process.h
++++ b/llvm/include/llvm/Support/Process.h
+@@ -36,6 +36,13 @@ namespace llvm {
+ template <typename T> class ArrayRef;
+ class StringRef;
+ 
++#ifdef _WIN32
++/// Windows host-version helpers (Windows hosts only; defined in
++/// lib/Support/Windows/Process.inc). Guard all uses with `#ifdef _WIN32`.
++LLVM_ABI bool IsSupportedWindows();
++LLVM_ABI std::string GetWindowsOSName();
++#endif
++
+ namespace sys {
+ 
+ 
+diff --git a/llvm/include/llvm/Support/Windows/WindowsSupport.h b/llvm/include/llvm/Support/Windows/WindowsSupport.h
+index 50a2540..a942b1c 100644
+--- a/llvm/include/llvm/Support/Windows/WindowsSupport.h
++++ b/llvm/include/llvm/Support/Windows/WindowsSupport.h
+@@ -51,12 +51,34 @@
+ 
+ namespace llvm {
+ 
++// Returns true if host OS older than Windows 7.
++LLVM_ABI bool IsLegacyWindows();
++
++// If false, LLVM may still run, but not guaranteed (running on Windows 2000 for example).
++LLVM_ABI bool IsSupportedWindows();
++
++// Experimental minimum host target, we may get LLVM working on NT 5.0.
++LLVM_ABI bool RunningWindows2KOrGreater();
++
++// Our normal minimum host target: Windows XP!
++LLVM_ABI bool RunningWindowsXPOrGreater();
++
++// Windows Vista: All of upstream MinGW and most of upstream LLVM target this with the functions they use.
++LLVM_ABI bool RunningWindowsVistaOrGreater();
++
++// If this is false, we are considered to be "legacy", used for
++// gating Windows XP/Vista compatibility code.
++LLVM_ABI bool RunningWindows7OrGreater();
++
+ /// Determines if the program is running on Windows 8 or newer. This
+ /// reimplements one of the helpers in the Windows 8.1 SDK, which are intended
+ /// to supercede raw calls to GetVersionEx. Old SDKs, Cygwin, and MinGW don't
+ /// yet have VersionHelpers.h, so we have our own helper.
+ LLVM_ABI bool RunningWindows8OrGreater();
+ 
++// Windows 10, modern baseline
++LLVM_ABI bool RunningWindows10OrGreater();
++
+ /// Determines if the program is running on Windows 11 or Windows Server 2022.
+ LLVM_ABI bool RunningWindows11OrGreater();
+ 
+@@ -66,6 +88,9 @@ LLVM_ABI bool RunningWindows11OrGreater();
+ /// be useful for working around certain kernel bugs.
+ LLVM_ABI llvm::VersionTuple GetWindowsOSVersion();
+ 
++// Human readable Windows version name.
++LLVM_ABI std::string GetWindowsOSName();
++
+ LLVM_ABI bool MakeErrMsg(std::string *ErrMsg, const std::string &prefix);
+ 
+ // Include GetLastError() in a fatal error message.
+diff --git a/llvm/lib/Support/Windows/Process.inc b/llvm/lib/Support/Windows/Process.inc
+index 01c05bb..5843a3a 100644
+--- a/llvm/lib/Support/Windows/Process.inc
++++ b/llvm/lib/Support/Windows/Process.inc
+@@ -499,11 +499,112 @@ llvm::VersionTuple llvm::GetWindowsOSVersion() {
+                             info.dwBuildNumber);
+ }
+ 
++std::string llvm::GetWindowsOSName() {
++  RTL_OSVERSIONINFOEXW info = GetWindowsVer();
++  const ULONG MAJOR = info.dwMajorVersion;
++  const ULONG MINOR = info.dwMinorVersion;
++  const ULONG BUILD = info.dwBuildNumber;
++  const std::string ntver = std::to_string(MAJOR) + "." +
++                            std::to_string(MINOR) + "." + std::to_string(BUILD);
++  switch (MAJOR) {
++  case 4UL:
++    return "Windows NT 4.0 " + ntver;
++  case 5UL:
++    switch (MINOR) {
++    case 0UL:
++      return "Windows 2000 " + ntver;
++    case 1UL:
++      return "Windows XP " + ntver;
++    case 2UL:
++      return "Windows Server 2003/XP x64 " + ntver;
++    default:
++      return "NT " + ntver;
++    }
++  case 6UL:
++    switch (MINOR) {
++    case 0UL:
++      switch (BUILD) {
++      case 6000UL:
++        return "Windows Vista/Server 2008 RTM " + ntver;
++      case 6001UL:
++        return "Windows Vista/Server 2008 SP1 " + ntver;
++      case 6002UL:
++        return "Windows Vista/Server 2008 SP2 " + ntver;
++      case 6003UL:
++        return "Windows Vista/Server 2008 KB4489887 " + ntver;
++      default:
++        return "Windows Vista/Server 2008 " + ntver;
++      }
++    case 1UL:
++      switch (BUILD) {
++      case 7600UL:
++        return "Windows 7/Server 2008 R2 RTM " + ntver;
++      case 7601UL:
++        return "Windows 7/Server 2008 R2 SP1 " + ntver;
++      case 8400UL:
++        return "Windows Home Server 2011 " + ntver;
++      default:
++        return "Windows 7/Server 2008 R2 " + ntver;
++      }
++    case 2UL:
++      return "Windows 8/Server 2012 " + ntver;
++    case 3UL:
++      return "Windows 8.1/Server 2012 R2 " + ntver;
++    default:
++      return "NT " + ntver;
++    }
++  case 10UL:
++    switch (MINOR) {
++    case 0UL:
++      return (BUILD < 22000UL ? "Windows 10 " : "Windows 11 ") + ntver;
++    default:
++      return "NT " + ntver;
++    }
++  default:
++    return "Unknown Windows " + ntver;
++  }
++}
++
++bool llvm::IsSupportedWindows() {
++  static bool is_xp = RunningWindowsXPOrGreater();
++  return is_xp;
++}
++
++bool llvm::IsLegacyWindows() {
++  static bool is_legacy = !RunningWindows7OrGreater();
++  return is_legacy;
++}
++
++bool llvm::RunningWindows2KOrGreater() {
++  // Windows 2000 is version 5.0, service pack 0.
++  return GetWindowsOSVersion() >= llvm::VersionTuple(5, 0, 0, 0);
++}
++
++bool llvm::RunningWindowsXPOrGreater() {
++  // Windows XP is version 5.1, service pack 0.
++  return GetWindowsOSVersion() >= llvm::VersionTuple(5, 1, 0, 0);
++}
++
++bool llvm::RunningWindowsVistaOrGreater() {
++  // Windows Vista is version 6.0, service pack 0.
++  return GetWindowsOSVersion() >= llvm::VersionTuple(6, 0, 0, 0);
++}
++
++bool llvm::RunningWindows7OrGreater() {
++  // Windows 7 is version 6.1, service pack 0.
++  return GetWindowsOSVersion() >= llvm::VersionTuple(6, 1, 0, 0);
++}
++
+ bool llvm::RunningWindows8OrGreater() {
+   // Windows 8 is version 6.2, service pack 0.
+   return GetWindowsOSVersion() >= llvm::VersionTuple(6, 2, 0, 0);
+ }
+ 
++bool llvm::RunningWindows10OrGreater() {
++  // Windows 10 is 10.0, but 11 is too.
++  return GetWindowsOSVersion() >= llvm::VersionTuple(10, 0, 0, 0);
++}
++
+ bool llvm::RunningWindows11OrGreater() {
+   RTL_OSVERSIONINFOEXW info = GetWindowsVer();
+   auto ver = llvm::VersionTuple(info.dwMajorVersion, info.dwMinorVersion, 0,

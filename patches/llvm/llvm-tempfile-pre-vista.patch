@@ -1,0 +1,61 @@
+LLVM's atomic file writes (llvm::sys::fs::TempFile, used by FileOutputBuffer and
+therefore by llvm-rc/windres, lld, llvm-objcopy, etc.) write to a temp file and
+then rename it onto the destination. On Windows TempFile::keep() renames through
+rename_handle() -- a HANDLE-based rename that needs SetFileInformationByHandle
+(Vista+); its only fallback recovers the source path via GetFinalPathNameByHandleW
+(also Vista+). Both are absent on Windows XP/2000, so the fallback dies with
+ERROR_CALL_NOT_IMPLEMENTED ("This function is not supported on this system") and
+every .res/.o/.exe atomic write fails -- e.g. `windres foo.rc -O coff foo.res`
+aborts right after the (now-working) preprocess step.
+
+The pre-Vista pieces are already in place: llvm-support-pre-vista.patch makes the
+public fs::rename() route through MoveFileExW by PATH (XP-safe), and TempFile::
+create() already reacts to setDeleteDisposition() failing on XP by setting
+RemoveOnClose=true and installing a RemoveFileOnSignal crash handler (so the temp
+is still cleaned up on abnormal exit). We deliberately keep setDeleteDisposition()
+returning ERROR_CALL_NOT_IMPLEMENTED for exactly that reason -- turning it into a
+no-op would drop the crash-cleanup signal handler AND leave keep() on the broken
+rename_handle() path.
+
+So the only fix needed is in TempFile::keep(): when RemoveOnClose is set (the
+pre-Vista path), rename by path with fs::rename(TmpName, Name) instead of the
+handle-based rename_handle(). The temp is opened with FILE_SHARE_DELETE, so it can
+be renamed while its handle is still open. The no-argument keep() likewise skips
+the disposition-clearing call, which was never applied on XP.
+
+This file (llvm/lib/Support/Path.cpp) is cross-platform; the changes are inside
+its existing #ifdef _WIN32 blocks, so non-Windows hosts are unaffected.
+
+diff --git a/llvm/lib/Support/Path.cpp b/llvm/lib/Support/Path.cpp
+index 1e2d53196..04cde8747 100644
+--- a/llvm/lib/Support/Path.cpp
++++ b/llvm/lib/Support/Path.cpp
+@@ -1287,7 +1287,13 @@ Error TempFile::keep(const Twine &Name) {
+       RemoveOnClose ? std::error_code() : setDeleteDisposition(H, false);
+   bool ShouldDelete = false;
+   if (!RenameEC) {
+-    RenameEC = rename_handle(H, Name);
++    // Pre-Vista: RemoveOnClose is set when setDeleteDisposition() failed (no
++    // SetFileInformationByHandle). rename_handle()'s only fallback there is
++    // MoveFileEx via GetFinalPathNameByHandleW, which is likewise unavailable,
++    // so rename by path instead -- fs::rename() uses MoveFileExW, and the temp
++    // is opened FILE_SHARE_DELETE so it can be renamed while still open.
++    RenameEC = RemoveOnClose ? fs::rename(TmpName, Name)
++                             : rename_handle(H, Name);
+     // If rename failed because it's cross-device, copy instead
+     if (RenameEC ==
+       std::error_code(ERROR_NOT_SAME_DEVICE, std::system_category())) {
+@@ -1333,8 +1339,11 @@ Error TempFile::keep() {
+
+ #ifdef _WIN32
+   auto H = reinterpret_cast<HANDLE>(_get_osfhandle(FD));
+-  if (std::error_code EC = setDeleteDisposition(H, false))
+-    return errorCodeToError(EC);
++  // Pre-Vista (RemoveOnClose set): the delete disposition was never applied
++  // (no SetFileInformationByHandle), so there is nothing to clear.
++  if (!RemoveOnClose)
++    if (std::error_code EC = setDeleteDisposition(H, false))
++      return errorCodeToError(EC);
+ #endif
+   sys::DontRemoveFileOnSignal(TmpName);
+
