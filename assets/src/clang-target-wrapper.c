@@ -13,8 +13,9 @@
  *   - clang drivers (clang/clang++/gcc/g++/cc/c++): exec clang with
  *       -target TARGET  --driver-mode={gcc,g++}  EXTRA  <args>
  *   - binutils tools (ar/ranlib/nm/strip/objcopy/objdump/dlltool/windres/
- *     strings/addr2line/ld): exec the matching llvm-<tool> (ld -> ld.lld)
- *     with <args> unchanged.
+ *     strings/addr2line/size/ld): exec the matching llvm-<tool> (ld -> ld.lld,
+ *     readelf -> llvm-readobj in readelf mode) with <args> unchanged.
+ *   - as: drive clang's integrated assembler (-x assembler -c).
  * The real binary is located next to the wrapper; clang finds its sysroot from
  * the target triple's sibling dir (../TARGET), same as upstream.
  *
@@ -192,6 +193,7 @@ int XMAIN(int argc, xchar **argv) {
 
   const xchar *real = NULL; /* binary file name (in our dir) */
   const xchar *mode = NULL; /* clang --driver-mode value, or NULL for binutils */
+  int assemble = 0;         /* 1 => drive clang's integrated assembler (as) */
 
   if (!XSTRCMP(tool, XL("clang")) || !XSTRCMP(tool, XL("gcc")) ||
       !XSTRCMP(tool, XL("cc"))) {
@@ -205,8 +207,19 @@ int XMAIN(int argc, xchar **argv) {
     real = XL("ld.lld");
   } else if (!XSTRCMP(tool, XL("windres"))) {
     real = XL("llvm-windres");
+  } else if (!XSTRCMP(tool, XL("readelf"))) {
+    /* No llvm-readelf is shipped; llvm-readobj emits readelf-style (GNU) output
+     * when argv[0] contains "readelf" (it does here), so route readelf there. */
+    real = XL("llvm-readobj");
+  } else if (!XSTRCMP(tool, XL("as"))) {
+    /* LLVM ships no standalone GNU as; drive clang's integrated assembler.
+     * assemble=1 injects "-target T -x assembler -c" below, so
+     * `as in.s -o out.o` produces an object. Best-effort: covers file-in/-o-out
+     * assembly, not the full GNU as CLI (e.g. --32). */
+    real = XL("clang");
+    assemble = 1;
   } else {
-    /* ar, ranlib, nm, strip, objcopy, objdump, dlltool, strings, addr2line, ... */
+    /* ar, ranlib, nm, strip, objcopy, objdump, dlltool, strings, addr2line, size */
     xchar *n = xmalloc((XSTRLEN(tool) + 6) * sizeof(xchar));
     XSTRCPY(n, XL("llvm-"));
     XSTRCAT(n, tool);
@@ -244,6 +257,13 @@ int XMAIN(int argc, xchar **argv) {
     newargv[n++] = drivermode;
     for (int i = 0; i < extra_count; i++)
       newargv[n++] = extra_argv[i];
+  }
+  if (assemble) {
+    newargv[n++] = (xchar *)XL("-target");
+    newargv[n++] = (xchar *)WTARGET;
+    newargv[n++] = (xchar *)XL("-x");
+    newargv[n++] = (xchar *)XL("assembler");
+    newargv[n++] = (xchar *)XL("-c");
   }
   for (int i = 1; i < argc; i++)
     newargv[n++] = argv[i];

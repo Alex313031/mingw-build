@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.1"
+SCRIPTVER="2.3.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -29,10 +29,12 @@ LOG_FILE="$ROOT_PATH/build.log"
 MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64" # https://git.code.sf.net/p/mingw-w64/mingw-w64
 BINUTILS_URL="https://github.com/rtems/sourceware-mirror-binutils-gdb" # https://git.sr.ht/~sourceware/binutils-gdb
 GCC_URL="https://github.com/gcc-mirror/gcc" # https://git.sr.ht/~sourceware/gcc
+MAKE_URL="https://ftpmirror.gnu.org/make" # GNU make tarballs (ftpmirror redirects to a nearby GNU mirror)
 # What branches to checkout
 MINGW_W64_BRANCH="v14.x"
 BINUTILS_BRANCH="binutils-2_47-branch"
 GCC_BRANCH="releases/gcc-16"
+MAKE_VERSION="4.4.1"
 
 # Controls minimum Windows target, should always be set non-zero later.
 WIN32_WINNT="0"
@@ -263,6 +265,14 @@ download_sources() {
   execute "Cloning GCC source..." "Unable to clone GCC, to use the official mirror: --gcc-url 'https://git.sr.ht/~sourceware/gcc'" \
       git clone $git_progress --depth 1 -b "$GCC_BRANCH" \
       "$GCC_URL" gcc
+
+  # GNU make ships as a release tarball (its git tree needs a heavy gnulib
+  # ./bootstrap; the tarball has a ready ./configure + gnulib baked in).
+  execute "Downloading GNU make $MAKE_VERSION source..." "Unable to download GNU make from $MAKE_URL (canonical: https://ftp.gnu.org/gnu/make/)" \
+      curl -fsSL "$MAKE_URL/make-$MAKE_VERSION.tar.gz" -o "make-$MAKE_VERSION.tar.gz"
+  execute "Extracting GNU make source..." "Unable to extract GNU make" \
+      tar -xf "make-$MAKE_VERSION.tar.gz"
+  mv "make-$MAKE_VERSION" make
 
   execute "Copying config.guess..." "" \
       cp -fv ${HERE}/assets/config.guess ./
@@ -802,6 +812,11 @@ USE_AVX512=$avx512"
   execute "($arch): Installing final GCC + libs" "Installing final GCC failed" \
       make install $VFLAGS
 
+  # cc -> gcc alias (upstream mingw ships cc; GCC itself installs only gcc +
+  # $host-gcc). Real copies -- the Windows-hosted deliverable can't use symlinks.
+  cp -f "$prefix/bin/$host-gcc$EXE_EXT" "$prefix/bin/$host-cc$EXE_EXT"
+  [ -e "$prefix/bin/gcc$EXE_EXT" ] && cp -f "$prefix/bin/gcc$EXE_EXT" "$prefix/bin/cc$EXE_EXT"
+
   # Only the Windows-hosted deliverable gets the custom MSVC-compat headers.
   # Skipping Phase 1 keeps its throwaway cross compiler's sysroot 100% stock, so
   # Phase 2's target libs are built against stock mingw-w64 headers.
@@ -816,6 +831,23 @@ USE_AVX512=$avx512"
       execute "($arch): Building host tool $_n.exe" "Building $_n failed" \
           "$host-gcc" -municode $HOST_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
     done
+
+    # GNU make -> mingw32-make.exe (+ a make.exe alias) so the Windows toolchain
+    # is self-contained (Windows ships no make). Windows-hosted only -- a Linux
+    # host already has make. -std=gnu17: make 4.4.1's bundled gnulib has K&R decls
+    # (extern char *getenv ();) that clash with GCC 16's C23-default () == (void).
+    create_dir "$bld_path/make"
+    change_dir "$bld_path/make"
+    execute "($arch): Configuring GNU make" "Configuring make failed" \
+        "$SRC_PATH/make/configure" --build="$BUILD" --host="$host" \
+        --disable-nls --disable-dependency-tracking \
+        "CC=$host-gcc" CFLAGS="$HOST_CFLAGS -std=gnu17" LDFLAGS="$HOST_LDFLAGS"
+    execute "($arch): Building GNU make" "Building make failed" \
+        make -j $JOB_COUNT $VFLAGS
+    execute "($arch): Installing mingw32-make.exe + make.exe" "Installing make failed" \
+        cp -v "make.exe" "$prefix/bin/mingw32-make.exe"
+    cp -f "$prefix/bin/mingw32-make.exe" "$prefix/bin/make.exe"
+
     copy_extra_files "$arch" "$prefix"
   fi
   write_version_file "$arch" "$prefix" "$VERSION_FLAGS"

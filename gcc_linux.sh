@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.1"
+SCRIPTVER="2.3.2"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -753,6 +753,11 @@ USE_AVX512=$avx512"
       make -j $JOB_COUNT $VFLAGS
   execute "($arch): Installing final GCC + libs" "Installing final GCC failed" \
       make install $VFLAGS
+
+  # cc -> gcc alias (upstream mingw ships cc; GCC itself installs only gcc +
+  # $host-gcc). Relative symlinks (Linux-hosted; unzip recreates them on extract).
+  ln -sf "$host-gcc" "$prefix/bin/$host-cc"
+  [ -e "$prefix/bin/gcc" ] && ln -sf gcc "$prefix/bin/cc"
 
   # Host-side utilities from assets/src, dropped in bin/ like gendef and built
   # LAST. Native (Linux-hosted) binaries; capped at C17 (-std=gnu17) so they build
