@@ -1,9 +1,68 @@
-Lowers the MinGW WinSDK version headers to a sane legacy default. sdkddkver.h
-defaults _WIN32_WINNT/NTDDI_VERSION/WINVER/_WIN32_IE down from Server 2003 to XP,
-and winsdkver.h lowers the _WIN32_MAXVER/NTDDI_MAXVER ceilings, so a build that
-does not pin a target still aims at old Windows rather than Vista+. Also adds a
-missing VS_FF_RELEASE definition to winver.h.
+Lowers the MinGW WinSDK version headers to a sane legacy default and adds a
+couple of definitions missing from mingw-w64.
 
+Version defaults -> Windows XP:
+  - sdkddkver.h: _WIN32_WINNT / NTDDI_VERSION / WINVER / _WIN32_IE default down
+    from Server 2003 to XP.
+  - winsdkver.h: lowers the _WIN32_MAXVER / NTDDI_MAXVER ceilings.
+  - windef.h: its standalone WINVER fallback (used when windef.h is included
+    without sdkddkver.h having run first) lowers 0x0502 -> 0x0501 (XP). It uses
+    the literal 0x0501 since _WIN32_WINNT_WINXP is not defined yet at that point.
+
+Missing definitions:
+  - winver.h: adds VS_FF_RELEASE.
+  - d3d9.h: adds the IDirect3D9ExOverlayExtension interface, placed INSIDE the
+    !D3D_DISABLE_9EX guard because it uses the 9Ex-only D3DDISPLAYMODEEX /
+    D3DDISPLAYROTATION types (breaks the build if D3D_DISABLE_9EX is defined and
+    the interface sits outside the guard).
+
+diff --git a/mingw-w64-headers/include/d3d9.h b/mingw-w64-headers/include/d3d9.h
+index 70bc119..a957a97 100644
+--- a/mingw-w64-headers/include/d3d9.h
++++ b/mingw-w64-headers/include/d3d9.h
+@@ -2202,6 +2202,42 @@ DECLARE_INTERFACE_IID_(IDirect3DDevice9Ex,IDirect3DDevice9,"b18b10ce-2649-405a-8
+ #define IDirect3DDevice9Ex_GetDisplayModeEx(p,a,b,c)                        (p)->GetDisplayModeEx(a,b,c)
+ #endif
+ 
++/*****************************************************************************
++ * IDirect3D9ExOverlayExtension interface
++ */
++#define INTERFACE IDirect3D9ExOverlayExtension
++DECLARE_INTERFACE_(IDirect3D9ExOverlayExtension,IUnknown)
++{
++    /*** IUnknown methods ***/
++    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID riid, void** ppvObject) PURE;
++    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
++    STDMETHOD_(ULONG,Release)(THIS) PURE;
++    /*** IDirect3D9ExOverlayExtension methods ***/
++    STDMETHOD(CheckDeviceOverlayType)(THIS_ UINT Adapter, D3DDEVTYPE DevType, UINT OverlayWidth, UINT OverlayHeight,
++            D3DFORMAT OverlayFormat, D3DDISPLAYMODEEX* pDisplayMode, D3DDISPLAYROTATION DisplayRotation, D3DOVERLAYCAPS* pOverlayCaps) PURE;
++};
++#undef INTERFACE
++
++#ifdef __CRT_UUID_DECL
++__CRT_UUID_DECL(IDirect3D9ExOverlayExtension,                   0x187aeb13, 0xaaf5, 0x4c59, 0x87, 0x6d, 0xe0, 0x59, 0x8, 0x8c, 0xd, 0xf8);
++#endif
++
++#if !defined(__cplusplus) || defined(CINTERFACE)
++/*** IUnknown methods ***/
++#define IDirect3D9ExOverlayExtension_QueryInterface(p,a,b) (p)->lpVtbl->QueryInterface(p,a,b)
++#define IDirect3D9ExOverlayExtension_AddRef(p) (p)->lpVtbl->AddRef(p)
++#define IDirect3D9ExOverlayExtension_Release(p) (p)->lpVtbl->Release(p)
++/*** IDirect3D9ExOverlayExtension ***/
++#define IDirect3D9ExOverlayExtension_CheckDeviceOverlayType(p,a,b,c,d,e,f,g,h) (p)->lpVtbl->CheckDeviceOverlayType(p,a,b,c,d,e,f,g,h)
++#else
++/*** IUnknown methods ***/
++#define IDirect3D9ExOverlayExtension_QueryInterface(p,a,b) (p)->QueryInterface(a,b)
++#define IDirect3D9ExOverlayExtension_AddRef(p) (p)->AddRef()
++#define IDirect3D9ExOverlayExtension_Release(p) (p)->Release()
++/*** IDirect3D9ExOverlayExtension ***/
++#define IDirect3D9ExOverlayExtension_CheckDeviceOverlayType(p,a,b,c,d,e,f,g,h) (p)->CheckDeviceOverlayType(a,b,c,d,e,f,g,h)
++#endif
++
+ #endif /* !defined(D3D_DISABLE_9EX) */
+ 
+ #ifdef __cplusplus
 diff --git a/mingw-w64-headers/include/sdkddkver.h b/mingw-w64-headers/include/sdkddkver.h
 index ee1ef33..0cc0224 100644
 --- a/mingw-w64-headers/include/sdkddkver.h
@@ -44,6 +103,19 @@ index ee1ef33..0cc0224 100644
  #endif
  #endif
  
+diff --git a/mingw-w64-headers/include/windef.h b/mingw-w64-headers/include/windef.h
+index 1eedc70..3fd736a 100644
+--- a/mingw-w64-headers/include/windef.h
++++ b/mingw-w64-headers/include/windef.h
+@@ -13,7 +13,7 @@ extern "C" {
+ #endif
+ 
+ #ifndef WINVER
+-#define WINVER 0x0502
++#define WINVER 0x0501 // Default to Windows XP
+ #endif
+ 
+ /* Make sure winnt.h is included.  */
 diff --git a/mingw-w64-headers/include/winsdkver.h b/mingw-w64-headers/include/winsdkver.h
 index 62e9182..8226ea5 100644
 --- a/mingw-w64-headers/include/winsdkver.h
