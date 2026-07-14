@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.0"
+SCRIPTVER="2.3.1"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -31,7 +31,7 @@ BINUTILS_URL="https://github.com/rtems/sourceware-mirror-binutils-gdb" # https:/
 GCC_URL="https://github.com/gcc-mirror/gcc" # https://git.sr.ht/~sourceware/gcc
 # What branches to checkout
 MINGW_W64_BRANCH="v14.x"
-BINUTILS_BRANCH="binutils-2_46-branch"
+BINUTILS_BRANCH="binutils-2_47-branch"
 GCC_BRANCH="releases/gcc-16"
 
 # Controls minimum Windows target, should always be set non-zero later.
@@ -750,18 +750,33 @@ USE_AVX512=$avx512"
   execute "($arch): Installing MinGW CRT" "Installing MinGW CRT failed" \
       make install $VFLAGS
 
-  create_dir "$bld_path/mingw-w64-gendef"
-  change_dir "$bld_path/mingw-w64-gendef"
+  # gendef plus the auxiliary mingw-w64 host tools (genidl, genpeimg, widl),
+  # each dropped into bin/ (as .exe for the Windows-hosted Canadian cross via
+  # $GENDEF_HOST/$EXE_EXT, or native binaries otherwise). gendef, genidl and
+  # genpeimg are plain tools. widl (the Wine IDL compiler) restricts its target
+  # to *-mingw32 and bakes a default IDL include dir; pointing its --prefix at
+  # the real toolchain prefix makes that dir a relocatable "../$host/include"
+  # (widl re-derives it relative to its own exe at runtime).
+  local _tool _cfg
+  for _tool in gendef genidl genpeimg widl; do
+    if [ "$_tool" = widl ]; then
+      _cfg="$GENDEF_HOST --target=$host --prefix=$prefix --with-widl-includedir=$prefix/$host/include"
+    else
+      _cfg="$GENDEF_HOST --prefix=$prefix/$host"
+    fi
+    create_dir "$bld_path/mingw-w64-$_tool"
+    change_dir "$bld_path/mingw-w64-$_tool"
 
-  execute "($arch): Configuring MinGW gendef" "Configuring gendef failed" \
-      "$SRC_PATH/mingw-w64/mingw-w64-tools/gendef/configure" --build="$BUILD" \
-      --prefix="$prefix/$host" $GENDEF_HOST \
-      CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
+    execute "($arch): Configuring MinGW $_tool" "Configuring $_tool failed" \
+        "$SRC_PATH/mingw-w64/mingw-w64-tools/$_tool/configure" --build="$BUILD" \
+        $_cfg \
+        CFLAGS="$HOST_CFLAGS" CXXFLAGS="$HOST_CXXFLAGS" LDFLAGS="$HOST_LDFLAGS"
 
-  execute "($arch): Building MinGW gendef" "Building gendef failed" \
-      make -j $JOB_COUNT $VFLAGS
-  execute "($arch): Installing MinGW gendef" "Installing gendef failed" \
-      cp -v "gendef$EXE_EXT" "$prefix/bin"
+    execute "($arch): Building MinGW $_tool" "Building $_tool failed" \
+        make -j $JOB_COUNT $VFLAGS
+    execute "($arch): Installing MinGW $_tool" "Installing $_tool failed" \
+        cp -v "$_tool$EXE_EXT" "$prefix/bin"
+  done
 
   if [ "$ENABLE_THREADS" ]; then
     create_dir "$bld_path/mingw-w64-winpthreads"

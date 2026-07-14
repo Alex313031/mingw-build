@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.0"
+SCRIPTVER="2.3.1"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -730,14 +730,21 @@ USE_AVX512=$avx512"
   # cross-building a static, XP-safe libxml2 isn't worth it for one rarely-used
   # tool. So llvm-mt is the one distribution component that differs between the
   # two LLVM scripts.
-  local llvm_dist="clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov;llvm-mt"
+  local llvm_dist="clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov;llvm-mt;lldb;liblldb"
 
   execute "($arch): Configuring LLVM (clang + lld)" "Configuring LLVM failed" \
       cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$prefix" \
-      -DLLVM_ENABLE_PROJECTS="clang;lld" \
+      -DLLVM_ENABLE_PROJECTS="clang;lld;lldb;polly" \
       -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
+      -DLLDB_ENABLE_PYTHON=OFF \
+      -DLLDB_ENABLE_LUA=OFF \
+      -DLLDB_ENABLE_LIBEDIT=OFF \
+      -DLLDB_ENABLE_CURSES=OFF \
+      -DLLDB_ENABLE_LIBXML2=OFF \
+      -DLLDB_INCLUDE_TESTS=OFF \
       -DLLVM_ENABLE_ASSERTIONS=OFF \
       -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
       -DLLVM_INCLUDE_TESTS=OFF \
@@ -924,19 +931,32 @@ USE_AVX512=$avx512"
       ninja install
 
   ##############################################################################
-  # 7. gendef (host tool from the MinGW-w64 tree)
+  # 7. gendef + auxiliary host tools (genidl, genpeimg, widl) from MinGW-w64
   ##############################################################################
-  create_dir "$bld_path/mingw-w64-gendef"
-  change_dir "$bld_path/mingw-w64-gendef"
+  # gendef, genidl and genpeimg are plain native tools. widl (the Wine IDL
+  # compiler) restricts its target to *-mingw32 and bakes a default IDL include
+  # dir; pointing its --prefix at the real toolchain prefix makes that dir a
+  # relocatable "../$triple/include" (widl re-derives it relative to its own exe
+  # at runtime), so it keeps working after the toolchain is zipped and moved.
+  local _tool _cfg
+  for _tool in gendef genidl genpeimg widl; do
+    if [ "$_tool" = widl ]; then
+      _cfg="--target=$triple --prefix=$prefix --with-widl-includedir=$prefix/$triple/include"
+    else
+      _cfg="--prefix=$prefix/$triple"
+    fi
+    create_dir "$bld_path/mingw-w64-$_tool"
+    change_dir "$bld_path/mingw-w64-$_tool"
 
-  execute "($arch): Configuring MinGW gendef" "Configuring gendef failed" \
-      "$SRC_PATH/mingw-w64/mingw-w64-tools/gendef/configure" --build="$BUILD" \
-      --prefix="$prefix/$triple" CFLAGS="$HOST_CFLAGS"
+    execute "($arch): Configuring MinGW $_tool" "Configuring $_tool failed" \
+        "$SRC_PATH/mingw-w64/mingw-w64-tools/$_tool/configure" --build="$BUILD" \
+        $_cfg CFLAGS="$HOST_CFLAGS"
 
-  execute "($arch): Building MinGW gendef" "Building gendef failed" \
-      make -j $JOB_COUNT $VFLAGS
-  execute "($arch): Installing MinGW gendef" "Installing gendef failed" \
-      cp -v gendef $prefix/bin
+    execute "($arch): Building MinGW $_tool" "Building $_tool failed" \
+        make -j $JOB_COUNT $VFLAGS
+    execute "($arch): Installing MinGW $_tool" "Installing $_tool failed" \
+        cp -v "$_tool" "$prefix/bin"
+  done
 
   # Host-side utilities from assets/src, dropped in bin/ like gendef and built
   # LAST. Native (Linux-hosted) binaries; capped at C17 (-std=gnu17) so they build

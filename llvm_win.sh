@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.0"
+SCRIPTVER="2.3.1"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -774,12 +774,22 @@ build_phase1_linux() {
   #    The build tree (kept until the end) supplies tblgen for Phase 2.
   create_dir "$bld_path/llvm"
   change_dir "$bld_path/llvm"
-  execute "($arch P1): Configuring LLVM (clang + lld)" "Configuring LLVM failed" \
+  # lldb is enabled here (built minimally) so Phase 1's build tree provides the
+  # native lldb-tblgen the Phase 2 cross-build needs (as it does for llvm-/clang-
+  # tblgen). Phase 1 is the discarded Linux-hosted intermediate, so its own lldb
+  # isn't shipped -- only the tblgen matters.
+  execute "($arch P1): Configuring LLVM (clang + lld + lldb-tblgen)" "Configuring LLVM failed" \
       cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$prefix" \
-      -DLLVM_ENABLE_PROJECTS="clang;lld" \
+      -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
       -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLDB_ENABLE_PYTHON=OFF \
+      -DLLDB_ENABLE_LUA=OFF \
+      -DLLDB_ENABLE_LIBEDIT=OFF \
+      -DLLDB_ENABLE_CURSES=OFF \
+      -DLLDB_ENABLE_LIBXML2=OFF \
+      -DLLDB_INCLUDE_TESTS=OFF \
       -DLLVM_ENABLE_ASSERTIONS=OFF \
       -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
       -DLLVM_INCLUDE_TESTS=OFF \
@@ -991,6 +1001,11 @@ build_phase2_windows() {
   #    of psapi, including Vista+ exports (EnumProcessModulesEx/QueryWorkingSetEx/
   #    GetWsChangesEx) that XP's psapi.dll lacks -> the tools failed to LOAD on XP.
   #    libunwind's own EnumProcessModules is resolved dynamically instead.
+  #    ole32: lldb's HostInfoWindows.cpp calls CoInitializeEx/CoUninitialize, but
+  #    lldb's CMake never links ole32 (MSVC auto-links COM via #pragma comment,
+  #    which ld.lld in mingw mode ignores). Added the same end-of-line way; it's
+  #    only pulled by objects that reference it (i.e. liblldb), and COM is Vista+-
+  #    safe anyway since lldb itself is a Vista-floor component.
   create_dir "$bld_path/llvm-win"
   change_dir "$bld_path/llvm-win"
   # Toolchain-only install set, applied via `ninja install-distribution` below:
@@ -1027,7 +1042,7 @@ build_phase2_windows() {
   # Only libc++ has a shared variant in the sysroot (libunwind/libc++abi/
   # winpthreads/compiler-rt are all static-only), so dropping -static makes
   # ONLY libc++ dynamic; everything else stays statically linked as before.
-  local llvm_dist="LLVM;clang-cpp;clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov"
+  local llvm_dist="LLVM;clang-cpp;clang;clang-resource-headers;clang-format;clang-scan-deps;lld;llvm-ar;llvm-ranlib;llvm-lib;llvm-dlltool;llvm-nm;llvm-objcopy;llvm-strip;llvm-objdump;llvm-windres;llvm-rc;llvm-cvtres;llvm-addr2line;llvm-symbolizer;llvm-strings;llvm-cxxfilt;llvm-readobj;llvm-size;llvm-dwarfdump;llvm-profdata;llvm-cov;lldb;liblldb"
   execute "($arch P2): Configuring Windows-hosted LLVM" "Configuring Windows LLVM failed" \
       cmake -G Ninja "$SRC_PATH/llvm-project/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
@@ -1048,8 +1063,16 @@ build_phase2_windows() {
       -DLLVM_NATIVE_TOOL_DIR="$native_tools" \
       -DLLVM_TABLEGEN="$native_tools/llvm-tblgen" \
       -DCLANG_TABLEGEN="$native_tools/clang-tblgen" \
-      -DLLVM_ENABLE_PROJECTS="clang;lld" \
+      -DLLVM_ENABLE_PROJECTS="clang;lld;lldb;polly" \
       -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
+      -DLLDB_TABLEGEN="$native_tools/lldb-tblgen" \
+      -DLLDB_ENABLE_PYTHON=OFF \
+      -DLLDB_ENABLE_LUA=OFF \
+      -DLLDB_ENABLE_LIBEDIT=OFF \
+      -DLLDB_ENABLE_CURSES=OFF \
+      -DLLDB_ENABLE_LIBXML2=OFF \
+      -DLLDB_INCLUDE_TESTS=OFF \
       -DLLVM_HOST_TRIPLE="$triple" \
       -DLLVM_DEFAULT_TARGET_TRIPLE="$triple" \
       -DLLVM_ENABLE_ASSERTIONS=OFF \
@@ -1071,8 +1094,8 @@ build_phase2_windows() {
       -DCMAKE_EXE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
       -DCMAKE_SHARED_LINKER_FLAGS="-pthread $STRIP_FLAG" \
       -DCMAKE_MODULE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
-      -DCMAKE_C_STANDARD_LIBRARIES="-lpsapi" \
-      -DCMAKE_CXX_STANDARD_LIBRARIES="-lpsapi"
+      -DCMAKE_C_STANDARD_LIBRARIES="-lpsapi -lole32" \
+      -DCMAKE_CXX_STANDARD_LIBRARIES="-lpsapi -lole32"
 
   # --clang-format: build ONLY clang-format.exe (cross-compiled via Phase 1's
   # clang) and drop it into the prefix's bin/, then stop -- skips the full LLVM
@@ -1128,17 +1151,31 @@ build_phase2_windows() {
   # as before. (Only the host toolchain uses the shared libc++.dll, from bin/.)
   rm -f "$prefix/$triple/lib/"libc++*.dll.a "$prefix/$triple/bin/"libc++*.dll
 
-  # 3. gendef -> gendef.exe (Canadian cross via the Phase 1 wrapper).
-  create_dir "$bld_path/gendef-win"
-  change_dir "$bld_path/gendef-win"
-  execute "($arch P2): Configuring MinGW gendef (Windows)" "Configuring gendef failed" \
-      "$SRC_PATH/mingw-w64/mingw-w64-tools/gendef/configure" --build="$BUILD" \
-      --host="$triple" --prefix="$prefix/$triple" \
-      "CC=$p1/bin/$wrap-cc" CFLAGS="$AUTOTOOLS_CFLAGS"
-  execute "($arch P2): Building MinGW gendef (Windows)" "Building gendef failed" \
-      make -j $JOB_COUNT $VFLAGS
-  execute "($arch P2): Installing MinGW gendef (Windows)" "Installing gendef failed" \
-      cp -v "gendef.exe" "$prefix/bin"
+  # 3. gendef + the auxiliary mingw-w64 host tools (genidl, genpeimg, widl),
+  #    Canadian-crossed to .exe via the Phase 1 wrapper and dropped into bin/.
+  #    gendef, genidl and genpeimg are plain tools. widl (the Wine IDL compiler)
+  #    restricts its target to *-mingw32 and bakes a default IDL include dir;
+  #    pointing its --prefix at the real toolchain prefix makes that dir a
+  #    relocatable "../$triple/include" that widl re-derives from its own exe at
+  #    runtime (via GetModuleFileNameA), so it survives the toolchain being moved.
+  local _tool _cfg
+  for _tool in gendef genidl genpeimg widl; do
+    if [ "$_tool" = widl ]; then
+      _cfg="--host=$triple --target=$triple --prefix=$prefix --with-widl-includedir=$prefix/$triple/include"
+    else
+      _cfg="--host=$triple --prefix=$prefix/$triple"
+    fi
+    create_dir "$bld_path/$_tool-win"
+    change_dir "$bld_path/$_tool-win"
+    execute "($arch P2): Configuring MinGW $_tool (Windows)" "Configuring $_tool failed" \
+        "$SRC_PATH/mingw-w64/mingw-w64-tools/$_tool/configure" --build="$BUILD" \
+        $_cfg \
+        "CC=$p1/bin/$wrap-cc" CFLAGS="$AUTOTOOLS_CFLAGS"
+    execute "($arch P2): Building MinGW $_tool (Windows)" "Building $_tool failed" \
+        make -j $JOB_COUNT $VFLAGS
+    execute "($arch P2): Installing MinGW $_tool (Windows)" "Installing $_tool failed" \
+        cp -v "$_tool.exe" "$prefix/bin"
+  done
 
   # 4. Windows toolchain wrappers + clang config, then the extra MSVC-compat
   #    headers and the version manifest.
