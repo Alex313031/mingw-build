@@ -8,7 +8,7 @@ around the plain functions so libc++ imports no _l symbols from msvcrt.dll.
 Self-guarding (active only for non-UCRT msvcrt < 0x0800), a no-op on UCRT builds.
 
 diff --git a/libcxx/include/__locale_dir/support/windows.h b/libcxx/include/__locale_dir/support/windows.h
-index 644ef68..8b0dcb6 100644
+index 644ef68ad..8b0dcb60b 100644
 --- a/libcxx/include/__locale_dir/support/windows.h
 +++ b/libcxx/include/__locale_dir/support/windows.h
 @@ -20,7 +20,8 @@

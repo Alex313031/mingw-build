@@ -4,26 +4,36 @@ MSVCRT abort() merely calls exit(), which does not properly signal a
 hard error, nor does it trap in debuggers. It's a poor experience. In
 contrast, a trap instruction accomplishes both.
 
+diff --git a/libstdc++-v3/libsupc++/eh_term_handler.h b/libstdc++-v3/libsupc++/eh_term_handler.h
+index 16f5cd456..ab3691350 100644
 --- a/libstdc++-v3/libsupc++/eh_term_handler.h
 +++ b/libstdc++-v3/libsupc++/eh_term_handler.h
-@@ -36,4 +36,4 @@
+@@ -35,5 +35,5 @@
+ # define _GLIBCXX_DEFAULT_TERM_HANDLER __gnu_cxx::__verbose_terminate_handler
  #else
  # include <cstdlib>
 -# define _GLIBCXX_DEFAULT_TERM_HANDLER std::abort
 +# define _GLIBCXX_DEFAULT_TERM_HANDLER __gnu_cxx::__trap_terminate_handler
  #endif
+diff --git a/libstdc++-v3/libsupc++/exception b/libstdc++-v3/libsupc++/exception
+index ab3e06da9..5f44c5e5e 100644
 --- a/libstdc++-v3/libsupc++/exception
 +++ b/libstdc++-v3/libsupc++/exception
-@@ -174,4 +174,6 @@
+@@ -173,6 +173,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
+    */
    void __verbose_terminate_handler();
  
 +  void __trap_terminate_handler();
 +
  _GLIBCXX_END_NAMESPACE_VERSION
  } // namespace
+ 
+diff --git a/libstdc++-v3/libsupc++/vterminate.cc b/libstdc++-v3/libsupc++/vterminate.cc
+index ad4898473..ad601bf2d 100644
 --- a/libstdc++-v3/libsupc++/vterminate.cc
 +++ b/libstdc++-v3/libsupc++/vterminate.cc
-@@ -93,7 +93,9 @@
+@@ -92,9 +92,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
+     else
        fputs("terminate called without an active exception\n", stderr);
  
 -    abort();
@@ -34,3 +44,4 @@ contrast, a trap instruction accomplishes both.
 +
  _GLIBCXX_END_NAMESPACE_VERSION
  } // namespace
+ 

@@ -13,7 +13,7 @@ llvm-support-pre-vista.patch). Only the Windows host compiles this file (a Linux
 host builds DirectoryWatcher-linux.cpp).
 
 diff --git a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
-index 110d402..612f355 100644
+index 110d40243..612f355b4 100644
 --- a/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
 +++ b/clang/lib/DirectoryWatcher/windows/DirectoryWatcher-windows.cpp
 @@ -87,16 +87,31 @@ DirectoryWatcherWindows::DirectoryWatcherWindows(

@@ -24,7 +24,7 @@ rely on lives in its own patch, llvm-win32-winnt-guard.patch.)
   compiled there).
 
 diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
-index eb3f9cb..784c356 100644
+index eb3f9cbea..e99145b8e 100644
 --- a/clang/lib/Driver/Driver.cpp
 +++ b/clang/lib/Driver/Driver.cpp
 @@ -2352,6 +2352,13 @@ void Driver::PrintVersion(const Compilation &C, raw_ostream &OS) const {
@@ -42,7 +42,7 @@ index eb3f9cb..784c356 100644
  
  /// PrintDiagnosticCategories - Implement the --print-diagnostic-categories
 diff --git a/lld/COFF/Driver.cpp b/lld/COFF/Driver.cpp
-index ec18756..7ac3515 100644
+index ec1875638..243c2ef91 100644
 --- a/lld/COFF/Driver.cpp
 +++ b/lld/COFF/Driver.cpp
 @@ -1644,6 +1644,9 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
@@ -56,7 +56,7 @@ index ec18756..7ac3515 100644
    }
  
 diff --git a/lld/MinGW/Driver.cpp b/lld/MinGW/Driver.cpp
-index 7063957..67f42e5 100644
+index 70639573b..906dde856 100644
 --- a/lld/MinGW/Driver.cpp
 +++ b/lld/MinGW/Driver.cpp
 @@ -41,6 +41,7 @@
@@ -82,7 +82,7 @@ index 7063957..67f42e5 100644
    // The behavior of -v or --version is a bit strange, but this is
    // needed for compatibility with GNU linkers.
 diff --git a/llvm/include/llvm/Support/Process.h b/llvm/include/llvm/Support/Process.h
-index f644fe7..78bfe11 100644
+index f644fe733..78bfe1139 100644
 --- a/llvm/include/llvm/Support/Process.h
 +++ b/llvm/include/llvm/Support/Process.h
 @@ -36,6 +36,13 @@ namespace llvm {
@@ -100,10 +100,10 @@ index f644fe7..78bfe11 100644
  
  
 diff --git a/llvm/include/llvm/Support/Windows/WindowsSupport.h b/llvm/include/llvm/Support/Windows/WindowsSupport.h
-index 50a2540..a942b1c 100644
+index 89c5faee6..64a63d70f 100644
 --- a/llvm/include/llvm/Support/Windows/WindowsSupport.h
 +++ b/llvm/include/llvm/Support/Windows/WindowsSupport.h
-@@ -51,12 +51,34 @@
+@@ -55,12 +55,34 @@
  
  namespace llvm {
  
@@ -138,7 +138,7 @@ index 50a2540..a942b1c 100644
  /// Determines if the program is running on Windows 11 or Windows Server 2022.
  LLVM_ABI bool RunningWindows11OrGreater();
  
-@@ -66,6 +88,9 @@ LLVM_ABI bool RunningWindows11OrGreater();
+@@ -70,6 +92,9 @@ LLVM_ABI bool RunningWindows11OrGreater();
  /// be useful for working around certain kernel bugs.
  LLVM_ABI llvm::VersionTuple GetWindowsOSVersion();
  
@@ -149,7 +149,7 @@ index 50a2540..a942b1c 100644
  
  // Include GetLastError() in a fatal error message.
 diff --git a/llvm/lib/Support/Windows/Process.inc b/llvm/lib/Support/Windows/Process.inc
-index 01c05bb..5843a3a 100644
+index 01c05bb21..5843a3a67 100644
 --- a/llvm/lib/Support/Windows/Process.inc
 +++ b/llvm/lib/Support/Windows/Process.inc
 @@ -499,11 +499,112 @@ llvm::VersionTuple llvm::GetWindowsOSVersion() {

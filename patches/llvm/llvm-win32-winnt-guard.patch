@@ -1,5 +1,7 @@
-Lets LLVM Support code see the caller's (low, legacy) _WIN32_WINNT in the code
-body while the Windows headers are still processed at 0x0601, so LLVM's own
+Two independent _WIN32_WINNT adjustments in LLVM's Windows headers, bundled here.
+
+Support code: let LLVM Support see the caller's (low, legacy) _WIN32_WINNT in the
+code body while the Windows headers are still processed at 0x0601, so LLVM's own
 compile-time `#if _WIN32_WINNT` guards evaluate against the real target instead
 of a forced Win7 floor.
 
@@ -17,35 +19,21 @@ of a forced Win7 floor.
     - raw_socket_stream.cpp: winsock2.h (pollfd / WSAPOLLFD / POLLIN / WSAPoll are
       Vista+; without the re-pin the file fails to compile).
 
-  DIASupport.h and lldb/Host/windows/windows.h: lower their hard-coded Vista
-  floor to XP (NTDDI_VISTA -> NTDDI_XP, _WIN32_WINNT_VISTA -> _WIN32_WINNT_XP).
-  Neither is built in this toolchain (DIA needs the MSVC DIA SDK; lldb is not in
-  LLVM_ENABLE_PROJECTS) -- included for correctness if ever enabled.
-
   NOTE: this is a maintenance-heavy approach -- every future Support file that
   includes extra Windows headers past WindowsSupport.h needs the same re-pin.
   The alternative for individual Vista+ imports is unconditional GetProcAddress
   resolution (see llvm-support-pre-vista.patch), which needs none of this.
 
-diff --git a/lldb/include/lldb/Host/windows/windows.h b/lldb/include/lldb/Host/windows/windows.h
-index d53d4b996..e65ed95e7 100644
---- a/lldb/include/lldb/Host/windows/windows.h
-+++ b/lldb/include/lldb/Host/windows/windows.h
-@@ -9,9 +9,10 @@
- #ifndef LLDB_lldb_windows_h_
- #define LLDB_lldb_windows_h_
- 
--#define NTDDI_VERSION NTDDI_VISTA
-+// Set to XP, lower than default
-+#define NTDDI_VERSION NTDDI_XP
- #undef _WIN32_WINNT // undef a previous definition to avoid warning
--#define _WIN32_WINNT _WIN32_WINNT_VISTA
-+#define _WIN32_WINNT _WIN32_WINNT_XP
- #define WIN32_LEAN_AND_MEAN
- #define NOGDI
- #undef NOMINMAX // undef a previous definition to avoid warning
+DIASupport.h: separately, lower this header's hard-coded Vista floor to XP
+(NTDDI_WINXP / _WIN32_WINNT_WINXP). It is only compiled when LLVM's DIA/PDB
+reader is enabled, which needs the MSVC DIA SDK and is never built in a mingw
+cross -- so this is dead code here and only preserves the "target XP if ever
+enabled" intent. (lldb's own windows.h is deliberately left at its stock Vista
+floor: unlike this header, lldb's Windows backend genuinely uses Vista+ APIs, so
+XP is the wrong floor there.)
+
 diff --git a/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h b/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
-index 570b40c..cbd713a 100644
+index 570b40c70..9201f1c16 100644
 --- a/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
 +++ b/llvm/include/llvm/DebugInfo/PDB/DIA/DIASupport.h
 @@ -13,10 +13,10 @@
@@ -57,14 +45,14 @@ index 570b40c..cbd713a 100644
 -#define _WIN32_WINNT _WIN32_WINNT_VISTA
 -#define WINVER _WIN32_WINNT_VISTA
 +// Require at least XP
-+#define NTDDI_VERSION NTDDI_XP
-+#define _WIN32_WINNT _WIN32_WINNT_XP
-+#define WINVER _WIN32_WINNT_XP
++#define NTDDI_VERSION NTDDI_WINXP
++#define _WIN32_WINNT _WIN32_WINNT_WINXP
++#define WINVER _WIN32_WINNT_WINXP
  #ifndef NOMINMAX
  #define NOMINMAX
  #endif
 diff --git a/llvm/include/llvm/Support/Windows/WindowsSupport.h b/llvm/include/llvm/Support/Windows/WindowsSupport.h
-index 50a2540..89c5fae 100644
+index 50a2540db..89c5faee6 100644
 --- a/llvm/include/llvm/Support/Windows/WindowsSupport.h
 +++ b/llvm/include/llvm/Support/Windows/WindowsSupport.h
 @@ -21,10 +21,11 @@
@@ -93,7 +81,7 @@ index 50a2540..89c5fae 100644
  
  /// Determines if the program is running on Windows 8 or newer. This
 diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
-index 97dd75a..cd92ff2 100644
+index 06eef0405..79b40728c 100644
 --- a/llvm/lib/Support/Windows/Path.inc
 +++ b/llvm/lib/Support/Windows/Path.inc
 @@ -23,13 +23,20 @@
@@ -120,7 +108,7 @@ index 97dd75a..cd92ff2 100644
  
  // MinGW doesn't define this.
 diff --git a/llvm/lib/Support/raw_socket_stream.cpp b/llvm/lib/Support/raw_socket_stream.cpp
-index f716317..2a02dd5 100644
+index 63e251130..6934a10a3 100644
 --- a/llvm/lib/Support/raw_socket_stream.cpp
 +++ b/llvm/lib/Support/raw_socket_stream.cpp
 @@ -29,8 +29,15 @@

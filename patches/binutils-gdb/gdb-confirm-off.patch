@@ -2,10 +2,10 @@ GDB's definition of "potentially dangerous" is far too broad. This option
 creates substantial friction and should be off by default.
 
 diff --git a/gdb/top.c b/gdb/top.c
-index f1d0baeb..e7d8e505 100644
+index 477c385d..38b9d555 100644
 --- a/gdb/top.c
 +++ b/gdb/top.c
-@@ -126,7 +126,7 @@ int inhibit_gdbinit = 0;
+@@ -195,7 +195,7 @@ int inhibit_gdbinit = 0;
  /* Flag for whether we want to confirm potentially dangerous
     operations.  Default is yes.  */
  

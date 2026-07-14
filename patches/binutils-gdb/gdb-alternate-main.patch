@@ -1,8 +1,10 @@
 Allows GDB to pick up alternate Win32-specific main functions.
 
+diff --git a/gdb/symtab.c b/gdb/symtab.c
+index 4ca6f92f..145c9c8c 100644
 --- a/gdb/symtab.c
 +++ b/gdb/symtab.c
-@@ -6599,6 +6599,23 @@
+@@ -6418,6 +6418,23 @@ find_main_name (void)
    if (symbol_found_p)
      return;
  

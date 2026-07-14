@@ -46,7 +46,7 @@ index 1e2d53196..04cde8747 100644
      if (RenameEC ==
        std::error_code(ERROR_NOT_SAME_DEVICE, std::system_category())) {
 @@ -1333,8 +1339,11 @@ Error TempFile::keep() {
-
+ 
  #ifdef _WIN32
    auto H = reinterpret_cast<HANDLE>(_get_osfhandle(FD));
 -  if (std::error_code EC = setDeleteDisposition(H, false))
@@ -58,4 +58,4 @@ index 1e2d53196..04cde8747 100644
 +      return errorCodeToError(EC);
  #endif
    sys::DontRemoveFileOnSignal(TmpName);
-
+ 

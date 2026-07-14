@@ -38,7 +38,7 @@ The psapi imports (K32EnumProcessModules / K32GetProcessMemoryInfo) are handled
 separately by building with -DPSAPI_VERSION=1, not by this patch.
 
 diff --git a/llvm/lib/Support/Windows/Memory.inc b/llvm/lib/Support/Windows/Memory.inc
-index 93a3211..9eb511a 100644
+index 93a32111e..9eb511a80 100644
 --- a/llvm/lib/Support/Windows/Memory.inc
 +++ b/llvm/lib/Support/Windows/Memory.inc
 @@ -62,7 +62,16 @@ static size_t getAllocationGranularity() {
@@ -60,7 +60,7 @@ index 93a3211..9eb511a 100644
      OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
                       &Token);
 diff --git a/llvm/lib/Support/Windows/Path.inc b/llvm/lib/Support/Windows/Path.inc
-index 97dd75a..06eef04 100644
+index 97dd75a74..06eef0405 100644
 --- a/llvm/lib/Support/Windows/Path.inc
 +++ b/llvm/lib/Support/Windows/Path.inc
 @@ -448,18 +448,52 @@ std::error_code is_local(const Twine &path, bool &result) {
@@ -248,7 +248,7 @@ index 97dd75a..06eef04 100644
      llvm::sys::path::make_preferred(result);
    return ok;
 diff --git a/llvm/lib/Support/Windows/Signals.inc b/llvm/lib/Support/Windows/Signals.inc
-index eec112e..f400ae6 100644
+index eec112e5a..f400ae679 100644
 --- a/llvm/lib/Support/Windows/Signals.inc
 +++ b/llvm/lib/Support/Windows/Signals.inc
 @@ -604,6 +604,27 @@ static HKEY FindWERKey(const llvm::Twine &RegistryLocation) {
@@ -313,7 +313,7 @@ index eec112e..f400ae6 100644
                                          &TypeSize))
        return false;
 diff --git a/llvm/lib/Support/Windows/Threading.inc b/llvm/lib/Support/Windows/Threading.inc
-index 86e46b9..0690a3c 100644
+index 86e46b99c..0690a3c03 100644
 --- a/llvm/lib/Support/Windows/Threading.inc
 +++ b/llvm/lib/Support/Windows/Threading.inc
 @@ -49,7 +49,41 @@ void llvm_thread_detach_impl(HANDLE hThread) {
@@ -496,7 +496,7 @@ index 86e46b9..0690a3c 100644
    static unsigned All =
        aggregate(getProcessorGroups(),
 diff --git a/llvm/lib/Support/raw_socket_stream.cpp b/llvm/lib/Support/raw_socket_stream.cpp
-index f716317..63e2511 100644
+index f71631730..63e251130 100644
 --- a/llvm/lib/Support/raw_socket_stream.cpp
 +++ b/llvm/lib/Support/raw_socket_stream.cpp
 @@ -242,7 +242,19 @@ manageTimeout(const std::chrono::milliseconds &Timeout,
@@ -521,7 +521,7 @@ index f716317..63e2511 100644
             getLastSocketErrorCode() == std::errc::interrupted);
  #else
 diff --git a/llvm/tools/llvm-ar/llvm-ar.cpp b/llvm/tools/llvm-ar/llvm-ar.cpp
-index 320a903..160155f 100644
+index 320a903b5..160155fcf 100644
 --- a/llvm/tools/llvm-ar/llvm-ar.cpp
 +++ b/llvm/tools/llvm-ar/llvm-ar.cpp
 @@ -567,8 +567,29 @@ static bool comparePaths(StringRef Path1, StringRef Path2) {
