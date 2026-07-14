@@ -794,6 +794,12 @@ USE_AVX512=$avx512"
   execute "($arch): Installing LLVM" "Installing LLVM failed" \
       ninja install-distribution
 
+  # install-distribution also drops non-binary helper scripts (git-clang-format +
+  # its .bat, run-clang-tidy) into bin/. This toolchain ships only real binaries,
+  # so strip the Python/batch clutter.
+  rm -f "$prefix/bin/"git-clang-format "$prefix/bin/"git-clang-format.bat \
+        "$prefix/bin/"run-clang-tidy "$prefix/bin/"clang-tidy-diff.py
+
   # clang-format ships in the toolchain bin/ (next to gendef) so the toolchain can
   # also lint C++ projects; `ninja` above already built it -- just copy it in.
   execute "($arch): Installing clang-format" "Installing clang-format failed" \

@@ -1147,6 +1147,12 @@ build_phase2_windows() {
   execute "($arch P2): Installing Windows-hosted LLVM" "Installing Windows LLVM failed" \
       ninja install-distribution
 
+  # install-distribution also drops non-binary helper scripts (git-clang-format +
+  # its .bat, run-clang-tidy) into bin/. This toolchain ships only real binaries,
+  # so strip the Python/batch clutter.
+  rm -f "$prefix/bin/"git-clang-format "$prefix/bin/"git-clang-format.bat \
+        "$prefix/bin/"run-clang-tidy "$prefix/bin/"clang-tidy-diff.py
+
   # clang-format.exe ships in the toolchain bin/ (next to gendef.exe) so the
   # toolchain can also lint C++ projects; `ninja` already built it -- copy it in.
   execute "($arch P2): Installing clang-format.exe" "Installing clang-format failed" \
