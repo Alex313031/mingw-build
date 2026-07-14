@@ -400,6 +400,17 @@ copy_extra_files() {
   log "${GRE}Copying extra headers to $outpath${c0}\n"
   execute "" "Failed to copy sdkddkver.h" cp -fv ${HERE}/patches/mingw/sdkddkver.h $outpath
   execute "" "Failed to copy winsdkver.h" cp -fv ${HERE}/patches/mingw/winsdkver.h $outpath
+  # Experimental extras from patches/extra (header-only, unrelated to XP): a
+  # universal C/C++ bool fallback and the unsigned-float (ufloat) type. These are
+  # language/stdlib headers, so install them next to the compiler's own
+  # stdbool.h (its freestanding include dir), NOT in the mingw sysroot beside
+  # windows.h.
+  local stdinc
+  stdinc=$(dirname "$(find "$prefix/lib" -path '*/include/stdbool.h' 2>/dev/null | head -1)")
+  [ -d "$stdinc" ] || error_exit "copy_extra_files: no compiler include dir (stdbool.h) under $prefix/lib"
+  log "${GRE}Copying stdlib extras to $stdinc${c0}\n"
+  execute "" "Failed to copy cstdbool.h" cp -fv ${HERE}/patches/extra/cstdbool.h "$stdinc"
+  execute "" "Failed to copy ufloat.h" cp -fv ${HERE}/patches/extra/ufloat.h "$stdinc"
   log "${GRE}Copying logo SVG to $prefix${c0}\n"
   execute "" "Failed to copy mingw.svg" cp -fv ${HERE}/assets/mingw-w64.svg $prefix/mingw.svg
 }
