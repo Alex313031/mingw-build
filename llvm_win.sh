@@ -1261,15 +1261,18 @@ build_phase2_windows() {
   # C++ with a narrow main (no -municode). Compiled with the Phase 1 wrapper, so
   # its own macros already describe this toolchain; we additionally inject the
   # facts the headers don't expose (git refs, versions, config) as -D string
-  # literals. SIMD baseline + exception model are left to macros (accurate here,
-  # since it's built with the arch baseline).
-  local _mv_cc _mv_bits _mv_thr _mv_mingw _mv_cref _mv_cfg
+  # literals, and read the SIMD baseline + exception model from the compiler's
+  # predefined macros for this arch's baseline.
+  local _mv_cc _mv_bits _mv_thr _mv_mingw _mv_cref _mv_cfg _mv_pd _mv_simd _mv_exc
   _mv_cc=$("$p1/bin/$wrap-cc" --version 2>/dev/null | head -1)
   _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
   _mv_cref=$(git_ref "$SRC_PATH/llvm-project" "$LLVM_BRANCH")
   _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
   [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
   [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
+  _mv_pd=$(printf '' | "$p1/bin/$wrap-cc" $SIMD_FLAGS ${MARCH:+-march=$MARCH} -dM -E - 2>/dev/null)
+  case "$_mv_pd" in *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
+  case "$_mv_pd" in *__SEH__*) _mv_exc="SEH";; *__USING_SJLJ_EXCEPTIONS__*) _mv_exc="SJLJ";; *) _mv_exc="DWARF (DW2)";; esac
   execute "($arch P2): Building host tool mingw-ver.exe" "Building mingw-ver failed" \
       "$p1/bin/$wrap-c++" $AUTOTOOLS_CFLAGS -std=gnu++17 -s \
       -DMV_KIND='"LLVM/Clang"' -DMV_STDLIB='"libc++"' -DMV_RTLIB='"compiler-rt + libunwind"' \
@@ -1279,6 +1282,7 @@ build_phase2_windows() {
       -DMV_ARCH="\"$arch\"" -DMV_TRIPLE="\"$triple\"" \
       -DMV_THREADS="\"$_mv_thr\"" -DMV_RUNTIME="\"$LINKED_RUNTIME\"" \
       -DMV_BITS="\"$_mv_bits\"" -DMV_WIN32_WINNT=$WIN32_WINNT \
+      -DMV_SIMD="\"$_mv_simd\"" -DMV_EXCEPTIONS="\"$_mv_exc\"" \
       "$HERE/assets/src/mingw-ver.cc" -o "$prefix/bin/mingw-ver.exe"
 
   copy_extra_files "$triple" "$prefix"
