@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.2"
+SCRIPTVER="2.3.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -998,6 +998,28 @@ USE_AVX512=$avx512"
     execute "($arch): Building host tool $_n" "Building $_n failed" \
         cc -std=gnu17 $OPT_FLAGS $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n"
   done
+
+  # mingw-ver -- one binary that reports the whole toolchain at a glance. This is
+  # a native Linux build (system c++), so its own macros describe the BUILD
+  # compiler, not the toolchain -- the injected -D values (compiler, stdlib,
+  # refs, ...) are authoritative and win over them.
+  local _mv_cc _mv_bits _mv_thr _mv_mingw _mv_cref _mv_cfg
+  _mv_cc=$("$prefix/bin/clang" --version 2>/dev/null | head -1)
+  _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
+  _mv_cref=$(git_ref "$SRC_PATH/llvm-project" "$LLVM_BRANCH")
+  _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
+  [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
+  [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
+  execute "($arch): Building host tool mingw-ver" "Building mingw-ver failed" \
+      c++ -std=gnu++17 $OPT_FLAGS -s \
+      -DMV_KIND='"LLVM/Clang"' -DMV_STDLIB='"libc++"' -DMV_RTLIB='"compiler-rt + libunwind"' \
+      -DMV_COMPILER="\"$_mv_cc\"" \
+      -DMV_MINGW_REF="\"$_mv_mingw\"" -DMV_COMPILER_REF="\"$_mv_cref\"" \
+      -DMV_TOOLCHAIN_VER="\"$SCRIPTVER\"" -DMV_CONFIG_GUESS="\"$_mv_cfg\"" \
+      -DMV_ARCH="\"$arch\"" -DMV_TRIPLE="\"$triple\"" \
+      -DMV_THREADS="\"$_mv_thr\"" -DMV_RUNTIME="\"$LINKED_RUNTIME\"" \
+      -DMV_BITS="\"$_mv_bits\"" -DMV_WIN32_WINNT=$WIN32_WINNT \
+      "$HERE/assets/src/mingw-ver.cc" -o "$prefix/bin/mingw-ver"
 
   copy_extra_files "$triple" "$prefix"
   write_version_file "$arch" "$prefix" "$VERSION_FLAGS"

@@ -14,6 +14,8 @@ In [./src/](./src) we have utilities adapted from [w64devkit](https://github.com
 
 And [clang-target-wrapper.c](./src/clang-target-wrapper.c) - LLVM toolchain entry-point wrapper; compiled once and stamped out as every `<triple>-<tool>.exe`.
 
+And [mingw-ver.cc](./src/mingw-ver.cc) - `mingw-ver[.exe]`: one self-contained binary that reports everything about the toolchain at a glance - the MinGW-w64 version, whether it's a GCC or LLVM/Clang build and that compiler's version, the C/C++ stdlib, linked CRT, target Windows floor, SIMD baseline, thread + exception model, build date and source commits, plus the host OS it's currently running on (the real NT version via `RtlGetVersion`, falling back to `GetVersionExW` on NT 4.0, or the Linux kernel via `uname`). One source compiles for both Windows and Linux via `#ifdef`s; the build injects the facts the headers don't expose (git refs, versions, config) as `-D` string literals. Run it from a terminal, or double-click it (it pauses so the window doesn't vanish).
+
 -----
 
 We also have the lovely classic Windows logos/banners:

@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.2"
+SCRIPTVER="2.3.3"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -1256,6 +1256,30 @@ build_phase2_windows() {
     execute "($arch P2): Building host tool $_n.exe" "Building $_n failed" \
         "$p1/bin/$wrap-cc" -municode $AUTOTOOLS_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
   done
+
+  # mingw-ver.exe -- one binary that reports the whole toolchain at a glance.
+  # C++ with a narrow main (no -municode). Compiled with the Phase 1 wrapper, so
+  # its own macros already describe this toolchain; we additionally inject the
+  # facts the headers don't expose (git refs, versions, config) as -D string
+  # literals. SIMD baseline + exception model are left to macros (accurate here,
+  # since it's built with the arch baseline).
+  local _mv_cc _mv_bits _mv_thr _mv_mingw _mv_cref _mv_cfg
+  _mv_cc=$("$p1/bin/$wrap-cc" --version 2>/dev/null | head -1)
+  _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
+  _mv_cref=$(git_ref "$SRC_PATH/llvm-project" "$LLVM_BRANCH")
+  _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
+  [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
+  [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
+  execute "($arch P2): Building host tool mingw-ver.exe" "Building mingw-ver failed" \
+      "$p1/bin/$wrap-c++" $AUTOTOOLS_CFLAGS -std=gnu++17 -s \
+      -DMV_KIND='"LLVM/Clang"' -DMV_STDLIB='"libc++"' -DMV_RTLIB='"compiler-rt + libunwind"' \
+      -DMV_COMPILER="\"$_mv_cc\"" \
+      -DMV_MINGW_REF="\"$_mv_mingw\"" -DMV_COMPILER_REF="\"$_mv_cref\"" \
+      -DMV_TOOLCHAIN_VER="\"$SCRIPTVER\"" -DMV_CONFIG_GUESS="\"$_mv_cfg\"" \
+      -DMV_ARCH="\"$arch\"" -DMV_TRIPLE="\"$triple\"" \
+      -DMV_THREADS="\"$_mv_thr\"" -DMV_RUNTIME="\"$LINKED_RUNTIME\"" \
+      -DMV_BITS="\"$_mv_bits\"" -DMV_WIN32_WINNT=$WIN32_WINNT \
+      "$HERE/assets/src/mingw-ver.cc" -o "$prefix/bin/mingw-ver.exe"
 
   copy_extra_files "$triple" "$prefix"
   # LLVM installs its multicall aliases (ld.lld, lld-link, llvm-windres, clang++,
