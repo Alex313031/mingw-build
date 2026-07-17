@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.3"
+SCRIPTVER="2.3.4"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -348,6 +348,13 @@ apply_patches() {
     execute "" "Failed to apply mingw-gettimeofday.patch" \
         git apply --reject ../patches/mingw-gettimeofday.patch
   fi
+  # mkstemp()/mkdtemp() seed their fallback RNG with _time32(NULL), which on x64
+  # becomes a hard import of msvcrt.dll's _time32 -- absent on NT 5.2 (Server 2003
+  # / XP x64), added only in Vista. Switch to _time64() (safe on every target via
+  # mingw's GetSystemTime emulation glue) so mkstemp-using x64 programs load on
+  # 2003 / XP x64. All arches/targets benefit, so apply unconditionally.
+  execute "" "Failed to apply mingw-time32_win2k3.patch" \
+      git apply --reject ../patches/mingw-time32_win2k3.patch
   execute "" "Failed to apply mingw-headers.patch" \
       git apply --reject ../patches/mingw-headers.patch
   execute "" "Unable to mark patches as applied" \

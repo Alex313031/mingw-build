@@ -1,0 +1,42 @@
+mkstemp()/mkdtemp() seed their fallback filename RNG (used when rand_s() fails)
+with _time32(NULL). On i386 the msvcrt import library aliases _time32 to the
+plain, universally-present "time" export (msvcrt.def.in: `_time32 F_I386(== time)`),
+so 32-bit binaries load everywhere. On x64 that alias is gone, so _time32 becomes
+a hard IAT import of msvcrt.dll's literal _time32 export -- which only exists on
+Vista and later. NT 5.2 (Windows Server 2003 / XP x64) ships an msvcrt.dll that
+exports _time64 but NOT _time32, so any x64 program that pulls in mkstemp/mkdtemp
+(e.g. anything using temp files) fails to load there with a missing-export error.
+
+Switch the seed to _time64(NULL). mingw provides _time64 via the msvcrt_or_emu
+glue (misc/_time64.c): it resolves msvcrt.dll's _time64 at runtime and falls back
+to a GetSystemTime()/SystemTimeToFileTime() emulation when the export is absent,
+so it is safe on every target and arch and never creates a static dependency on a
+Vista+ symbol. The value is only used as entropy for a temp name, so truncating
+the 64-bit result to unsigned int is harmless. Applied unconditionally.
+
+diff --git a/mingw-w64-crt/misc/mkdtemp.c b/mingw-w64-crt/misc/mkdtemp.c
+index 977aff2..d09a6e1 100644
+--- a/mingw-w64-crt/misc/mkdtemp.c
++++ b/mingw-w64-crt/misc/mkdtemp.c
+@@ -39,7 +39,7 @@ char *__cdecl mkdtemp (char *template_name)
+     for (i = 0; i <= INT_MAX; i++) {
+         for(j = index; j < len; j++) {
+             if (rand_s(&r))
+-                r = rand() ^ _time32(NULL);
++                r = rand() ^ (unsigned int) _time64 (NULL);
+             template_name[j] = letters[r % 62];
+         }
+         ret = _mkdir(template_name);
+diff --git a/mingw-w64-crt/misc/mkstemp.c b/mingw-w64-crt/misc/mkstemp.c
+index b42df3c..2f588bf 100644
+--- a/mingw-w64-crt/misc/mkstemp.c
++++ b/mingw-w64-crt/misc/mkstemp.c
+@@ -47,7 +47,7 @@ int __cdecl mkstemp (char *template_name)
+     for (i = 0; i <= INT_MAX; i++) {
+         for(j = index; j < len; j++) {
+             if (rand_s(&r))
+-                r = rand() ^ _time32(NULL);
++                r = rand() ^ (unsigned int) _time64 (NULL);
+             template_name[j] = letters[r % 62];
+         }
+         fd = _sopen(template_name,

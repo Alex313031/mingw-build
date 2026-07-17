@@ -26,6 +26,11 @@ A notable exception is the mingw-rand_s-win2k.patch, which I made myself for Min
                                                   resolves it dynamically (via `GetProcAddress`) and falls back to a [`GetSystemTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) + [`SystemTimeToFileTime`](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-systemtimetofiletime)
                                                   emulation (both present on every NT release). Applied only for NT4 targets (`_WIN32_WINNT < 0x0500`).
 
+[mingw-time32_win2k3.patch](./mingw/mingw-time32_win2k3.patch) - Fixes MinGW CRT `mkstemp`/`mkdtemp` on 64-bit NT 5.2 (Windows Server 2003 / XP x64). Both seed their fallback filename RNG (used when `rand_s` fails) with `_time32(NULL)`. On i386
+                                                  the msvcrt import library aliases `_time32` to the universally-present `time` export, but on x64 that alias is gone, so `_time32` becomes a *hard* import of `msvcrt.dll`'s `_time32` symbol - which only exists on Vista and
+                                                  later (NT 5.2 exports [`_time64`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/time-time32-time64) but not `_time32`). Any x64 program that pulls in `mkstemp`/`mkdtemp` (e.g. anything using temp files) therefore fails to load on
+                                                  Server 2003 / XP x64. Switches the seed to `_time64()`, which MinGW provides via a runtime [`GetSystemTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) emulation fallback, so it is safe on every target and arch. Applied unconditionally.
+
 [sdkddkver.h](./mingw/sdkddkver.h) and [winsdkver.h](./mingw/winsdkver.h) - Custom written replacements for these MSVC's headers, with expanded macros and definitions for old Windows.
 
 ### GCC
