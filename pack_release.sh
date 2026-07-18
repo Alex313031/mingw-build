@@ -37,7 +37,7 @@
 # The originals are never modified; results land in the output directory.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.4"
+SCRIPTVER="2.3.5"
 
 # Colors
 YEL='\033[1;33m' # Yellow

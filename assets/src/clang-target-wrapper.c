@@ -194,6 +194,7 @@ int XMAIN(int argc, xchar **argv) {
   const xchar *real = NULL; /* binary file name (in our dir) */
   const xchar *mode = NULL; /* clang --driver-mode value, or NULL for binutils */
   int assemble = 0;         /* 1 => drive clang's integrated assembler (as) */
+  int msvc = 0;             /* 1 => clang-cl (MSVC-syntax driver, mingw target) */
 
   if (!XSTRCMP(tool, XL("clang")) || !XSTRCMP(tool, XL("gcc")) ||
       !XSTRCMP(tool, XL("cc"))) {
@@ -203,6 +204,18 @@ int XMAIN(int argc, xchar **argv) {
              !XSTRCMP(tool, XL("c++"))) {
     real = XL("clang");
     mode = XL("g++");
+  } else if (!XSTRCMP(tool, XL("cl"))) {
+    /* clang-cl: MSVC-syntax driver, retargeted at this toolchain's mingw sysroot.
+     * The entry point is "<triple>-clang-cl", so the segment after the last '-'
+     * is "cl". Stock clang-cl forces *-pc-windows-msvc and wants the Microsoft
+     * SDK/STL this toolchain does not ship; injecting "-target TARGET" flips it
+     * to the GNU/mingw environment (msvc=1 also injects --driver-mode=cl and /Zl
+     * below). Compile-oriented: /Zl strips the MSVC default-lib directives
+     * (libcmt/oldnames) so the .obj links with the <triple>-clang++ driver.
+     * MSVC *syntax*, GNU/Itanium ABI. The sysroot is auto-detected from the
+     * sibling ../TARGET dir, same as the other clang drivers. */
+    real = XL("clang");
+    msvc = 1;
   } else if (!XSTRCMP(tool, XL("ld"))) {
     real = XL("ld.lld");
   } else if (!XSTRCMP(tool, XL("windres"))) {
@@ -264,6 +277,15 @@ int XMAIN(int argc, xchar **argv) {
     newargv[n++] = (xchar *)XL("-x");
     newargv[n++] = (xchar *)XL("assembler");
     newargv[n++] = (xchar *)XL("-c");
+  }
+  if (msvc) {
+    /* clang-cl parses cl.exe syntax; -target pins the mingw env, /Zl drops the
+     * MSVC default-lib directives so objects link with <triple>-clang++. No
+     * EXTRA: those are link defaults, and this driver is for compiling (/c). */
+    newargv[n++] = (xchar *)XL("-target");
+    newargv[n++] = (xchar *)WTARGET;
+    newargv[n++] = (xchar *)XL("--driver-mode=cl");
+    newargv[n++] = (xchar *)XL("/Zl");
   }
   for (int i = 1; i < argc; i++)
     newargv[n++] = argv[i];
