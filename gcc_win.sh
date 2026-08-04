@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.5"
+SCRIPTVER="2.3.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_gcc"
@@ -75,11 +75,17 @@ Archs:
   i586         - Windows 32-bit for old CPUs without SSE (Intel Pentium (MMX), Pentium II, AMD K5, K6, K7)
   i686 | x32   - Windows 32-bit for CPUs with SSE (Intel Pentium III and newer, Athlon XP and newer)
   x86_64 | x64 - Windows 64-bit for CPUs with SSE2 (Intel Prescott, AMD K8 and newer)
+  arm64 | aarch64 | --arm - Windows on ARM 64-bit TARGET (ARMv8-A, Windows 10+, UCRT).
+                 The toolchain's own binaries stay x86_64 .exe (GCC 16 cannot build
+                 aarch64-hosted binaries; expected in GCC 17), so it runs on x64
+                 Windows -- or on a WoA box via its built-in x64 emulation -- and
+                 CROSS-compiles to arm64. Experimental: C is solid, C++
+                 exceptions/SEH are not implemented upstream yet.
 
 Options:
   -h, --help                  Show this help.
   -v, --verbose               Log build output to the console as well as the build.log file.
-  -a, --all                   Build all three archs: i586, i686 and x86_64.
+  -a, --all                   Build all three x86 archs: i586, i686 and x86_64 (arm64 is opt-in; combine with --arm).
   --version                   Show script version.
   --deps                      Install prerequisites for using this script (Ubuntu/Debian only).
   -j <count>, --jobs <count>  Override make job count. (default: $JOB_COUNT)
@@ -517,11 +523,21 @@ build_toolchain() {
   #                      Linux script. GMP (gdb's hard requirement) builds
   #                      in-tree for the target host via the gmp/mpfr symlinks.
   local GDB_FLAGS="--disable-gdb"
+  # $win_host is the triple the Windows pass builds the toolchain's own
+  # binaries FOR. For the x86 archs that is the target arch itself; for arm64
+  # it is x86_64 (GCC 16 cannot build aarch64-w64-mingw32 HOST binaries --
+  # expected in GCC 17 -- so the arm64 toolchain ships as x64 .exe that
+  # CROSS-compile to arm64; a WoA box runs them via its x64 emulation). The
+  # x86_64 Phase 1 cross that compiles those host binaries is put on PATH by
+  # build() before this Windows pass runs.
+  local win_host="$host"
+  [ "$arch" = "aarch64" ] && win_host="x86_64-w64-mingw32"
   if [ "$windows_host" = "windows" ]; then
-    CROSS_FLAGS="--build=$BUILD --host=$host"
-    GENDEF_HOST="--host=$host"
+    CROSS_FLAGS="--build=$BUILD --host=$win_host"
+    GENDEF_HOST="--host=$win_host"
     EXE_EXT=".exe"
     host_label="Windows-hosted"
+    [ "$win_host" != "$host" ] && host_label="Windows-hosted ($win_host .exe, targets $host)"
     GDB_FLAGS="--enable-gdb --disable-gdbserver --disable-tui --without-python --without-expat --disable-werror"
   fi
 
@@ -660,6 +676,14 @@ USE_SSE42=$sse42
 USE_AVX=$avx
 USE_AVX2=$avx2
 USE_AVX512=$avx512"
+  elif [ "$arch" = "aarch64" ]; then
+    # ARMv8-A makes NEON/AdvSIMD and FP architecturally mandatory, so there is
+    # no SIMD ladder to climb like on x86 -- the --mmx/--sse*/--avx* flags
+    # don't apply here (dispatch never sets USE_* for this arch). The CPU
+    # baseline comes from --with-arch=$MARCH below.
+    local SIMD_FLAGS=""
+    local MARCH="armv8-a"
+    local VERSION_FLAGS="SIMD=NEON (ARMv8-A baseline)"
   fi
   local TARGET_CFLAGS="$OPT_FLAGS $SIMD_FLAGS -pipe"
   if (( WIN32_WINNT < 0x0601 )); then
@@ -683,6 +707,12 @@ USE_AVX512=$avx512"
   elif [ "$arch" = "x86_64" ]; then
     local x86_dwarf=""
     local crt_lib="--enable-lib64 --disable-lib32"
+  elif [ "$arch" = "aarch64" ]; then
+    # No DWARF2/SJLJ overrides on aarch64 PE (GCC 16 has no working unwinder
+    # for this target yet -- C++ exceptions terminate at runtime). The CRT
+    # ships only the WinARM64 libs.
+    local x86_dwarf=""
+    local crt_lib="--enable-libarm64 --disable-libarm32 --disable-lib32 --disable-lib64"
   else
     error_exit "No matching arch: '$arch'"
   fi
@@ -847,27 +877,30 @@ USE_AVX512=$avx512"
     for _t in "peports:peports.c" "pkg-config:pkg-config.c" "xxd:rexxd.c" "uuidgen:uuidgen.c"; do
       _n=${_t%%:*}; _src=${_t#*:}; _xf=""; [ "$_n" = xxd ] && _xf="-funroll-loops"
       execute "($arch): Building host tool $_n.exe" "Building $_n failed" \
-          "$host-gcc" -municode $HOST_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
+          "$win_host-gcc" -municode $HOST_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
     done
 
     # mingw-ver.exe -- one binary that reports the whole toolchain at a glance.
-    # C++ with a narrow main (no -municode). Built with $host-g++, so its macros
-    # already describe this toolchain; we inject the facts the headers don't
-    # expose (git refs, versions, config) as -D string literals.
+    # C++ with a narrow main (no -municode). Built with $win_host-g++ (the
+    # compiler for the machine the toolchain RUNS on); the facts the headers
+    # don't expose (git refs, versions, config) ride in as -D string literals,
+    # and the target-describing values are probed from $host-gcc below.
     local _mv_cc _mv_bits _mv_thr _mv_mingw _mv_cref _mv_cfg _mv_pd _mv_simd _mv_exc
     _mv_cc=$("$host-gcc" --version 2>/dev/null | head -1)
     _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
     _mv_cref=$(git_ref "$SRC_PATH/gcc" "$GCC_BRANCH")
     _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
-    [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
+    case "$arch" in x86_64|aarch64) _mv_bits="64-bit";; *) _mv_bits="32-bit";; esac
     [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
-    # SIMD baseline + exception model, read from the compiler's predefined macros
-    # for this arch's baseline (matches what $HOST_CFLAGS bakes into the binary).
+    # SIMD baseline + exception model, read from the TARGET compiler's
+    # predefined macros for this arch's baseline (for the x86 archs that also
+    # matches what $HOST_CFLAGS bakes into the binary; for arm64 the binary is
+    # an x64 .exe but the reported baseline describes the aarch64 target).
     _mv_pd=$(printf '' | "$host-gcc" $SIMD_FLAGS ${MARCH:+-march=$MARCH} -dM -E - 2>/dev/null)
-    case "$_mv_pd" in *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
+    case "$_mv_pd" in *__ARM_NEON*) _mv_simd="NEON (ARMv8-A)";; *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
     case "$_mv_pd" in *__SEH__*) _mv_exc="SEH";; *__USING_SJLJ_EXCEPTIONS__*) _mv_exc="SJLJ";; *) _mv_exc="DWARF (DW2)";; esac
     execute "($arch): Building host tool mingw-ver.exe" "Building mingw-ver failed" \
-        "$host-g++" $HOST_CFLAGS -std=gnu++17 -s \
+        "$win_host-g++" $HOST_CFLAGS -std=gnu++17 -s \
         -DMV_KIND='"GCC"' -DMV_STDLIB='"libstdc++"' -DMV_RTLIB='"libgcc"' \
         -DMV_COMPILER="\"$_mv_cc\"" \
         -DMV_MINGW_REF="\"$_mv_mingw\"" -DMV_COMPILER_REF="\"$_mv_cref\"" \
@@ -885,9 +918,9 @@ USE_AVX512=$avx512"
     create_dir "$bld_path/make"
     change_dir "$bld_path/make"
     execute "($arch): Configuring GNU make" "Configuring make failed" \
-        "$SRC_PATH/make/configure" --build="$BUILD" --host="$host" \
+        "$SRC_PATH/make/configure" --build="$BUILD" --host="$win_host" \
         --disable-nls --disable-dependency-tracking \
-        "CC=$host-gcc" CFLAGS="$HOST_CFLAGS -std=gnu17" LDFLAGS="$HOST_LDFLAGS"
+        "CC=$win_host-gcc" CFLAGS="$HOST_CFLAGS -std=gnu17" LDFLAGS="$HOST_LDFLAGS"
     execute "($arch): Building GNU make" "Building make failed" \
         make -j $JOB_COUNT $VFLAGS
     execute "($arch): Installing mingw32-make.exe + make.exe" "Installing make failed" \
@@ -910,6 +943,30 @@ build() {
   local arch="$1"
   local prefix="$2"
   shift 2
+
+  # arm64 is a true three-way Canadian cross: build = Linux, host = x86_64
+  # Windows, target = aarch64 Windows. Phase 2 therefore needs TWO Phase 1
+  # cross toolchains on PATH: x86_64-w64-mingw32-gcc to compile the host
+  # binaries, and the aarch64-w64-mingw32-* tools for the target libs (and for
+  # GCC's own build->target steps). An x86_64 Phase 1 left over from an x86_64
+  # build earlier in the same run (or a kept-artifacts run) is reused as-is:
+  # only host TOOLS are compiled with it, so the exact CRT/WINNT it was built
+  # with is immaterial.
+  if [ "$arch" = "aarch64" ]; then
+    local x64_p1="$ROOT_PATH/linux-cross/x86_64"
+    if [ -x "$x64_p1/bin/x86_64-w64-mingw32-gcc" ]; then
+      log "${YEL}=== ($arch) Reusing existing x86_64 Phase 1 cross toolchain ===${c0}\n"
+    else
+      log "${GRE}=== ($arch) Starting Phase 1a: Linux-hosted x86_64 cross (x64 host side) ===${c0}\n"
+      build_toolchain x86_64 "$x64_p1"
+    fi
+    export PATH="$x64_p1/bin:$PATH"
+    log "${GRE}=== ($arch) Starting Phase 1b: Linux-hosted aarch64 cross (target side) ===${c0}\n"
+    build_toolchain aarch64 "$ROOT_PATH/linux-cross/aarch64"
+    log "${GRE}=== ($arch) Starting Phase 2: Windows-hosted (x64 .exe) toolchain targeting arm64 ===${c0}\n"
+    build_toolchain aarch64 "$prefix" windows
+    return
+  fi
 
   # Phase 1: Linux-hosted cross toolchain into an intermediate prefix.
   # build_toolchain() adds its bin/ to PATH, exposing $arch-w64-mingw32-* tools.
@@ -1108,6 +1165,7 @@ while :; do
     --crtlib)
         if [ "$2" ]; then
           LINKED_RUNTIME="$2"
+          GOT_CRTLIB=1
           shift
         else
           arg_error "'--crtlib' requires a non-empty option argument"
@@ -1115,6 +1173,7 @@ while :; do
         ;;
     --crtlib=?*)
         LINKED_RUNTIME=${1#*=}
+        GOT_CRTLIB=1
         ;;
     --crtlib=)
         arg_error "'--crtlib' requires a non-empty option argument"
@@ -1172,9 +1231,13 @@ while :; do
     x86_64|x64)
         BUILD_X86_64=1
         ;;
+    arm64|aarch64|--arm)
+        BUILD_ARM64=1
+        ;;
     -a|--all)
-        # build every arch; each picks its own _WIN32_WINNT default at
-        # dispatch unless the user passed --win32-winnt
+        # build every x86 arch; each picks its own _WIN32_WINNT default at
+        # dispatch unless the user passed --win32-winnt. arm64 is opt-in
+        # (experimental), so --all does not imply it; -a --arm builds all four.
         BUILD_I586=1
         BUILD_I686=1
         BUILD_X86_64=1
@@ -1260,7 +1323,7 @@ if [ "$PATCHES_ONLY" ]; then
   exit 0
 fi
 
-NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64))
+NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64 + BUILD_ARM64))
 # --download-sources only clones the repos and exits, so it needs no arch
 if [ "$NUM_BUILDS" -eq 0 ] && [ ! "$JUST_SOURCES" ]; then
   arg_error "No ARCH was specified"
@@ -1323,16 +1386,25 @@ if [ "$JUST_SOURCES" ]; then
   TOTAL_STEPS=4
 else
   TOTAL_STEPS=$((TOTAL_STEPS + PREREQ_STEPS + THREADS_STEPS + BUILD_STEPS + PACKAGE_STEPS))
+  # arm64 runs an extra Phase 1 pass (the x86_64 host-side cross); approximate,
+  # and an overshoot when that pass is reused from an earlier x86_64 build.
+  if [ "$BUILD_ARM64" ]; then
+    ARM64_EXTRA=16
+    [ "$ENABLE_THREADS" ] && ARM64_EXTRA=$((ARM64_EXTRA + 3))
+    TOTAL_STEPS=$((TOTAL_STEPS + ARM64_EXTRA))
+  fi
 fi
 
 if [ "$PREFIX" ]; then
   I586_PREFIX="$PREFIX"
   I686_PREFIX="$PREFIX"
   X86_64_PREFIX="$PREFIX"
+  ARM64_PREFIX="$PREFIX"
 else
   I586_PREFIX="$ROOT_PATH/i586"
   I686_PREFIX="$ROOT_PATH/i686"
   X86_64_PREFIX="$ROOT_PATH/x64"
+  ARM64_PREFIX="$ROOT_PATH/arm64"
 fi
 
 CURRENT_STEP=1
@@ -1421,12 +1493,29 @@ if [ "$BUILD_X86_64" ]; then
   ADD_TO_PATH+=("'$X86_64_PREFIX/bin'")
 fi
 
+if [ "$BUILD_ARM64" ]; then
+  # Windows on ARM64 only exists from Windows 10 (0x0A00) up, and its mingw
+  # runtime of record is the UCRT (always present on 10+; the legacy
+  # msvcrt.dll path is untested on arm64), so default both unless the user
+  # explicitly chose otherwise. Runs last so the ucrt default can't leak into
+  # the x86 builds of a combined run. The x86 SIMD flags belong to the x86
+  # deliverables, so reset them: the arm64 build's x86_64 host-side pass
+  # always uses the plain x86-64 baseline.
+  [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0A00"
+  [ "$GOT_CRTLIB" ] || LINKED_RUNTIME="ucrt"
+  USE_MMX=false USE_SSE2=false USE_SSE3=false USE_SSE41=false USE_SSE42=false
+  USE_AVX=false USE_AVX2=false USE_AVX512=false
+  build aarch64 "$ARM64_PREFIX"
+  ADD_TO_PATH+=("'$ARM64_PREFIX/bin'")
+fi
+
 # Reaching here means every requested build succeeded (build() aborts on error).
 # Package each built arch; the 64-bit one is named x64.zip.
 if [ "$PACKAGE" ]; then
   [ "$BUILD_I586" ]   && package_arch i586 i586
   [ "$BUILD_I686" ]   && package_arch i686 i686
   [ "$BUILD_X86_64" ] && package_arch x64 x64
+  [ "$BUILD_ARM64" ]  && package_arch arm64 arm64
 fi
 
 if [ ! "$KEEP_ARTIFACTS" ]; then

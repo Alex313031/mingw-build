@@ -28,7 +28,7 @@
 # CMake flags. Raise the SIMD level or _WIN32_WINNT if a runtime won't build.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.5"
+SCRIPTVER="2.3.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_llvm"
@@ -82,11 +82,13 @@ Archs:
   i586         - Windows 32-bit for old CPUs without SSE (Intel Pentium (MMX), Pentium II, AMD K5, K6, K7)
   i686 | x32   - Windows 32-bit for CPUs with SSE (Intel Pentium III and newer, Athlon XP and newer)
   x86_64 | x64 - Windows 64-bit for CPUs with SSE2 (Intel Prescott, AMD K8 and newer)
+  arm64 | aarch64 | --arm - Windows on ARM 64-bit (ARMv8-A, Windows 10+, UCRT). LLVM supports
+                 this target fully (SEH exceptions included), unlike the GCC flavor.
 
 Options:
   -h, --help                  Show this help.
   -v, --verbose               Log build output to the console as well as the build.log file.
-  -a, --all                   Build all three archs: i586, i686 and x86_64.
+  -a, --all                   Build all three x86 archs: i586, i686 and x86_64 (arm64 is opt-in; combine with --arm).
   --version                   Show script version.
   --deps                      Install prerequisites for using this script (Ubuntu/Debian only).
   -j <count>, --jobs <count>  Override make/ninja job count. (default: $JOB_COUNT)
@@ -571,6 +573,11 @@ build() {
   local triple="$arch-w64-mingw32"
   local wrap="$arch-w64-mingw32"
 
+  # Each prefix carries only its own arch's LLVM backend, mirroring how the x86
+  # toolchains build just X86.
+  local llvm_targets="X86"
+  [ "$arch" = "aarch64" ] && llvm_targets="AArch64"
+
   export PATH="$prefix/bin:$PATH"
 
   # --clang-format reuses the existing build tree + prefix (it just drops a fresh
@@ -694,6 +701,13 @@ USE_SSE42=$sse42
 USE_AVX=$avx
 USE_AVX2=$avx2
 USE_AVX512=$avx512"
+  elif [ "$arch" = "aarch64" ]; then
+    # ARMv8-A makes NEON/AdvSIMD and FP architecturally mandatory, so there is
+    # no SIMD ladder to climb like on x86 -- the --mmx/--sse*/--avx* flags
+    # don't apply here (dispatch never sets USE_* for this arch).
+    local SIMD_FLAGS=""
+    local MARCH="armv8-a"
+    local VERSION_FLAGS="SIMD=NEON (ARMv8-A baseline)"
   fi
   # -march pins the CPU baseline; SIMD_FLAGS enable/disable the instruction sets.
   SIMD_FLAGS="-march=$MARCH $SIMD_FLAGS"
@@ -719,6 +733,8 @@ USE_AVX512=$avx512"
     local crt_lib="--enable-lib32 --disable-lib64"
   elif [ "$arch" = "x86_64" ]; then
     local crt_lib="--enable-lib64 --disable-lib32"
+  elif [ "$arch" = "aarch64" ]; then
+    local crt_lib="--enable-libarm64 --disable-libarm32 --disable-lib32 --disable-lib64"
   else
     error_exit "No matching arch: '$arch'"
   fi
@@ -784,7 +800,7 @@ USE_AVX512=$avx512"
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$prefix" \
       -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb;polly" \
-      -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_TARGETS_TO_BUILD="$llvm_targets" \
       -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
       -DLLDB_ENABLE_PYTHON=OFF \
       -DLLDB_ENABLE_LUA=OFF \
@@ -1034,13 +1050,13 @@ USE_AVX512=$avx512"
   _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
   _mv_cref=$(git_ref "$SRC_PATH/llvm-project" "$LLVM_BRANCH")
   _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
-  [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
+  case "$arch" in x86_64|aarch64) _mv_bits="64-bit";; *) _mv_bits="32-bit";; esac
   [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
   # SIMD baseline + exception model: read them from the toolchain compiler's own
   # predefined macros (this arch's baseline flags, via the target-cc wrapper) so
   # they are right even here, where mingw-ver is built by the host's system c++.
   _mv_pd=$(printf '' | "$prefix/bin/$triple-cc" $SIMD_FLAGS ${MARCH:+-march=$MARCH} -dM -E - 2>/dev/null)
-  case "$_mv_pd" in *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
+  case "$_mv_pd" in *__ARM_NEON*) _mv_simd="NEON (ARMv8-A)";; *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
   case "$_mv_pd" in *__SEH__*) _mv_exc="SEH";; *__USING_SJLJ_EXCEPTIONS__*) _mv_exc="SJLJ";; *) _mv_exc="DWARF (DW2)";; esac
   execute "($arch): Building host tool mingw-ver" "Building mingw-ver failed" \
       c++ -std=gnu++17 $OPT_FLAGS -s \
@@ -1227,6 +1243,7 @@ while :; do
     --crtlib)
         if [ "$2" ]; then
           LINKED_RUNTIME="$2"
+          GOT_CRTLIB=1
           shift
         else
           arg_error "'--crtlib' requires a non-empty option argument"
@@ -1234,6 +1251,7 @@ while :; do
         ;;
     --crtlib=?*)
         LINKED_RUNTIME=${1#*=}
+        GOT_CRTLIB=1
         ;;
     --crtlib=)
         arg_error "'--crtlib' requires a non-empty option argument"
@@ -1291,9 +1309,13 @@ while :; do
     x86_64|x64)
         BUILD_X86_64=1
         ;;
+    arm64|aarch64|--arm)
+        BUILD_ARM64=1
+        ;;
     -a|--all)
-        # build every arch; each picks its own _WIN32_WINNT default at
-        # dispatch unless the user passed --win32-winnt
+        # build every x86 arch; each picks its own _WIN32_WINNT default at
+        # dispatch unless the user passed --win32-winnt. arm64 is opt-in
+        # (experimental), so --all does not imply it; -a --arm builds all four.
         BUILD_I586=1
         BUILD_I686=1
         BUILD_X86_64=1
@@ -1379,7 +1401,7 @@ if [ "$PATCHES_ONLY" ]; then
   exit 0
 fi
 
-NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64))
+NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64 + BUILD_ARM64))
 # --download-sources only clones the repos and exits, so it needs no arch
 if [ "$NUM_BUILDS" -eq 0 ] && [ ! "$JUST_SOURCES" ]; then
   arg_error "No ARCH was specified"
@@ -1441,10 +1463,12 @@ if [ "$PREFIX" ]; then
   I586_PREFIX="$PREFIX"
   I686_PREFIX="$PREFIX"
   X86_64_PREFIX="$PREFIX"
+  ARM64_PREFIX="$PREFIX"
 else
   I586_PREFIX="$ROOT_PATH/i586_llvm"
   I686_PREFIX="$ROOT_PATH/i686_llvm"
   X86_64_PREFIX="$ROOT_PATH/x64_llvm"
+  ARM64_PREFIX="$ROOT_PATH/arm64_llvm"
 fi
 
 CURRENT_STEP=1
@@ -1531,12 +1555,25 @@ if [ "$BUILD_X86_64" ]; then
   ADD_TO_PATH+=("'$X86_64_PREFIX/bin'")
 fi
 
+if [ "$BUILD_ARM64" ]; then
+  # Windows on ARM64 only exists from Windows 10 (0x0A00) up, and its mingw
+  # runtime of record is the UCRT (always present on 10+; llvm-mingw likewise
+  # supports arm64 only with ucrt), so default both unless the user explicitly
+  # chose otherwise. Runs last so the ucrt default can't leak into the x86
+  # builds of a combined run.
+  [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0A00"
+  [ "$GOT_CRTLIB" ] || LINKED_RUNTIME="ucrt"
+  build aarch64 "$ARM64_PREFIX"
+  ADD_TO_PATH+=("'$ARM64_PREFIX/bin'")
+fi
+
 # Reaching here means every requested build succeeded (build() aborts on error).
 # Package each built arch; the 64-bit one is named x64.zip.
 if [ "$PACKAGE" ]; then
   [ "$BUILD_I586" ]   && package_arch i586_llvm i586_llvm
   [ "$BUILD_I686" ]   && package_arch i686_llvm i686_llvm
   [ "$BUILD_X86_64" ] && package_arch x64_llvm x64_llvm
+  [ "$BUILD_ARM64" ]  && package_arch arm64_llvm arm64_llvm
 fi
 
 if [ ! "$KEEP_ARTIFACTS" ]; then

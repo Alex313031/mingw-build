@@ -2,7 +2,7 @@
 
 This is a collection of bash scripts to build a portable [MinGW-w64](https://mingw-w64.org) toolchain
 using either the [GCC](https://gcc.gnu.org/) or [LLVM](https://llvm.org/) compiler.
-It includes toolchains for i586 (Win32), i686 (Win32) and x86_64 (Win64).  
+It includes toolchains for i586 (Win32), i686 (Win32), x86_64 (Win64), and (experimental) arm64 (Windows on ARM64).  
 It primarily targets legacy Windows like Windows NT 4.0, Windows 2000, and XP, since the latest upstream MinGW only targets Vista+.  
 The Windows-hosted builds also *run* on those old versions (down to 2000), not just produce binaries for them.  
 
@@ -43,8 +43,12 @@ See the [./patches](./patches/README.md) subdirectory for more info.
 The i586 build targets Pentium and Windows NT 4.0. It lacks MMX and SSE instructions.  
 The i686 build targets Pentium III and Windows 2000 by default. It has SSE instructions by default.  
 The x86_64 (x64) build targets Windows Server 2003 by default. It has SSE2 instructions by default.  
+The arm64 (aarch64) build targets ARMv8-A and Windows 10+ with the UCRT. Request it with `--arm` (or the `arm64`/`aarch64` arch keyword); `--all` covers only the three x86 archs.  
 
  - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX, AVX2, and (experimental) AVX-512
+ - arm64 is a cross TARGET in all four scripts: the toolchain itself always runs on x64 (Linux x64 for the `*_linux` scripts, x64 Windows .exe for the `*_win`
+   scripts — which also run on a WoA box via its built-in x64 emulation). The LLVM flavor supports the target fully; the GCC flavor's aarch64-w64-mingw32
+   target has solid C but no C++ exceptions/SEH yet (upstream work, expected around GCC 17).
 
 ## Usage
 `mingw_*.sh` __&lt;arch&gt; [options]__

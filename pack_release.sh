@@ -34,10 +34,16 @@
 #     mingw_gcc_linux_i586.zip
 #     +-- i586/...
 #
+# The flattening is arch-agnostic (every *.zip in the input is processed), so
+# new archs need no changes here. A full release run currently yields 16
+# artifacts: {gcc,llvm}_{linux,win} x {i586, i686, x64, arm64}. The arm64
+# Windows-hosted toolchains are x64-hosted crosses (x86_64 .exe that TARGET
+# arm64), so like the other Windows builds their zips carry no symlinks.
+#
 # The originals are never modified; results land in the output directory.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.5"
+SCRIPTVER="2.3.6"
 
 # Colors
 YEL='\033[1;33m' # Yellow

@@ -17,10 +17,14 @@ jobs:
     # not affect where the toolchain runs -- it runs on Windows.
     runs-on: ubuntu-22.04
     # One arch per job, in parallel; don't let one arch's failure cancel the rest.
+    # arm64 is an x64-hosted cross: its clang.exe etc. run on x64 Windows (or
+    # on WoA via x64 emulation) and TARGET arm64. Phase 1 builds an extra
+    # x86_64 host-side sysroot for it; fail-fast is off, so a broken arm64
+    # build never blocks the x86 artifacts.
     strategy:
       fail-fast: false
       matrix:
-        arch: [i586, i686, x64]
+        arch: [i586, i686, x64, arm64]
     # Two full from-source LLVM toolchains per arch (Phase 1 native + Phase 2
     # cross); this is heavy, so allow the maximum (6h job ceiling).
     timeout-minutes: 360

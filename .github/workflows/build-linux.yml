@@ -17,10 +17,13 @@ jobs:
     # no container.
     runs-on: ubuntu-22.04
     # One arch per job, in parallel; don't let one arch's failure cancel the rest.
+    # arm64 (Windows on ARM64, experimental: C solid, C++ exceptions pending
+    # upstream SEH support) rides along -- fail-fast is off, so a broken arm64
+    # build never blocks the x86 artifacts.
     strategy:
       fail-fast: false
       matrix:
-        arch: [i586, i686, x64]
+        arch: [i586, i686, x64, arm64]
     # A single from-source toolchain is long but well under the 6h job ceiling.
     timeout-minutes: 120
     steps:

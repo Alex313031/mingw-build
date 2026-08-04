@@ -17,12 +17,18 @@ jobs:
     # not affect where the toolchain runs -- it runs on Windows.
     runs-on: ubuntu-22.04
     # One arch per job, in parallel; don't let one arch's failure cancel the rest.
+    # arm64 is an x64-hosted cross (its .exe run on x64 Windows and TARGET
+    # arm64; GCC 16 cannot build aarch64-hosted binaries) and runs THREE
+    # toolchain passes (x86_64 + aarch64 Phase 1 crosses, then Phase 2), so
+    # it is the longest job; fail-fast is off, so a broken arm64 build never
+    # blocks the x86 artifacts.
     strategy:
       fail-fast: false
       matrix:
-        arch: [i586, i686, x64]
-    # Two from-source toolchains per arch (Phase 1 + Phase 2); still under 6h.
-    timeout-minutes: 240
+        arch: [i586, i686, x64, arm64]
+    # Two from-source toolchains per arch (Phase 1 + Phase 2), three for arm64;
+    # still under 6h.
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4

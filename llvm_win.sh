@@ -40,7 +40,7 @@
 # legacy floor (no-SSE i586, NT 4.0/2000) is shared with the Linux-hosted script.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.5"
+SCRIPTVER="2.3.6"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/win_llvm"
@@ -99,11 +99,15 @@ Archs:
   i586         - Windows 32-bit for old CPUs without SSE (Intel Pentium (MMX), Pentium II, AMD K5, K6, K7)
   i686 | x32   - Windows 32-bit for CPUs with SSE (Intel Pentium III and newer, Athlon XP and newer)
   x86_64 | x64 - Windows 64-bit for CPUs with SSE2 (Intel Prescott, AMD K8 and newer)
+  arm64 | aarch64 | --arm - Windows on ARM 64-bit TARGET (ARMv8-A, Windows 10+, UCRT).
+                 The toolchain's own binaries stay x86_64 .exe, so it runs on x64
+                 Windows -- or on a WoA box via its built-in x64 emulation -- and
+                 CROSS-compiles to arm64.
 
 Options:
   -h, --help                  Show this help.
   -v, --verbose               Log build output to the console as well as the build.log file.
-  -a, --all                   Build all three archs: i586, i686 and x86_64.
+  -a, --all                   Build all three x86 archs: i586, i686 and x86_64 (arm64 is opt-in; combine with --arm).
   --version                   Show script version.
   --deps                      Install prerequisites for using this script (Ubuntu/Debian only).
   -j <count>, --jobs <count>  Override make/ninja job count. (default: $JOB_COUNT)
@@ -654,6 +658,27 @@ compute_arch_flags() {
   triple="$arch-w64-mingw32"
   wrap="$arch-w64-mingw32"
 
+  # $host_triple is what the Phase 2 .exe are built FOR. It equals the target
+  # triple except for arm64, where the toolchain ships as x86_64 .exe that
+  # CROSS-compile to aarch64 (a WoA box runs them via its x64 emulation).
+  host_triple="$triple"
+  host_wrap="$wrap"
+  if [ "$arch" = "aarch64" ]; then
+    host_triple="x86_64-w64-mingw32"
+    host_wrap="x86_64-w64-mingw32"
+  fi
+
+  # LLVM backends: the Phase 2 deliverable carries only its own TARGET's
+  # backend, mirroring how the x86 toolchains build just X86. Phase 1's clang
+  # must codegen for every triple the two phases compile (the host-side .exe
+  # AND the target runtimes), so for arm64 it builds both backends.
+  llvm_targets="X86"
+  p1_llvm_targets="X86"
+  if [ "$arch" = "aarch64" ]; then
+    llvm_targets="AArch64"
+    p1_llvm_targets="X86;AArch64"
+  fi
+
   # OPT_FLAGS / STRIP_FLAG are controlled by IS_DEBUG. The test is
   # [ "$IS_DEBUG" = true ], NOT [ "$IS_DEBUG" ]: IS_DEBUG defaults to the
   # string "false", which a plain non-empty test would wrongly treat as true.
@@ -751,6 +776,13 @@ USE_SSE42=$sse42
 USE_AVX=$avx
 USE_AVX2=$avx2
 USE_AVX512=$avx512"
+  elif [ "$arch" = "aarch64" ]; then
+    # ARMv8-A makes NEON/AdvSIMD and FP architecturally mandatory, so there is
+    # no SIMD ladder to climb like on x86 -- the --mmx/--sse*/--avx* flags
+    # don't apply here (dispatch never sets USE_* for this arch).
+    SIMD_FLAGS=""
+    MARCH="armv8-a"
+    VERSION_FLAGS="SIMD=NEON (ARMv8-A baseline)"
   else
     error_exit "No matching arch: '$arch'"
   fi
@@ -771,14 +803,30 @@ USE_AVX512=$avx512"
   fi
   TARGET_CXXFLAGS="$TARGET_CFLAGS"
   AUTOTOOLS_CFLAGS="$TARGET_CFLAGS"
-  # HOST_CFLAGS build the host LLVM tools. In Phase 1 they run on Linux; in
-  # Phase 2 they run on the Windows target, so there they use the arch SIMD
-  # baseline instead (see build_phase2_windows).
+  # HOSTEXE_CFLAGS build the Phase 2 Windows .exe (the toolchain's own
+  # binaries, which run on $host_triple). For the x86 archs they equal
+  # TARGET_CFLAGS, so clang.exe runs on the same CPU floor it targets; for
+  # arm64 the .exe are x86_64, so use the plain x86-64 baseline instead of the
+  # ARM target flags.
+  if [ "$arch" = "aarch64" ]; then
+    HOSTEXE_CFLAGS="$OPT_FLAGS -march=x86-64 -mfpmath=sse -mmmx -mfxsr -msse -msse2 -pipe"
+    if (( WIN32_WINNT < 0x0601 )); then
+      HOSTEXE_CFLAGS+=" -DPSAPI_VERSION=1"
+    else
+      HOSTEXE_CFLAGS+=" -DPSAPI_VERSION=2"
+    fi
+  else
+    HOSTEXE_CFLAGS="$TARGET_CFLAGS"
+  fi
+  # HOST_CFLAGS build the native LLVM tools of Phase 1, which run on the Linux
+  # build machine (Phase 2's Windows .exe use HOSTEXE_CFLAGS instead).
   HOST_CFLAGS="$OPT_FLAGS -mfpmath=sse -msse2 -pipe -D_WIN32_WINNT=$WIN32_WINNT"
   HOST_CXXFLAGS="$HOST_CFLAGS"
 
   if [ "$arch" = "i586" ] || [ "$arch" = "i686" ]; then
     crt_lib="--enable-lib32 --disable-lib64"
+  elif [ "$arch" = "aarch64" ]; then
+    crt_lib="--enable-libarm64 --disable-libarm32 --disable-lib32 --disable-lib64"
   else
     crt_lib="--enable-lib64 --disable-lib32"
   fi
@@ -788,13 +836,14 @@ USE_AVX512=$avx512"
   fi
 }
 
-# PHASE 1: build a normal Linux-hosted llvm-mingw toolchain into $2 -- byte-for-
-# byte what llvm_linux.sh produces. This is the intermediate that
-# drives the Canadian cross: its clang/lld compile Phase 2, its build-tree
-# llvm-tblgen/clang-tblgen feed the LLVM cross-build, and its target runtimes
-# (compiler-rt/libunwind/libc++/CRT/winpthreads) are reused verbatim by Phase 2.
+# PHASE 1 part A: build the Linux-hosted LLVM host tools (native clang/lld/
+# llvm-*, whose build tree also supplies the tblgens Phase 2 needs) into $2,
+# and lay down the $wrap toolchain wrappers. The sysroot(s) are added by
+# build_phase1_sysroot; together the two parts produce what llvm_linux.sh
+# builds in one pass. This is the intermediate that drives the Canadian cross:
+# its clang/lld compile Phase 2, and its target runtimes are reused verbatim.
 # Assumes compute_arch_flags() has set the shared globals. $1 = arch, $2 = prefix
-build_phase1_linux() {
+build_phase1_llvm() {
   local arch="$1"
   local prefix="$2"
   local bld_path="$BLD_PATH/$arch"
@@ -808,27 +857,7 @@ build_phase1_linux() {
     remove_path "$prefix"
   fi
 
-  # CMAKE flags for runtime (target) builds: drive the Phase 1 clang as a cross
-  # compiler for $triple.
-  local CMAKE_TARGET_ARGS=(
-    -DCMAKE_SYSTEM_NAME=Windows
-    -DCMAKE_C_COMPILER="$prefix/bin/clang"
-    -DCMAKE_CXX_COMPILER="$prefix/bin/clang++"
-    -DCMAKE_ASM_COMPILER="$prefix/bin/clang"
-    -DCMAKE_C_COMPILER_TARGET="$triple"
-    -DCMAKE_CXX_COMPILER_TARGET="$triple"
-    -DCMAKE_ASM_COMPILER_TARGET="$triple"
-    -DCMAKE_SYSROOT="$prefix/$triple"
-    -DCMAKE_AR="$prefix/bin/llvm-ar"
-    -DCMAKE_RANLIB="$prefix/bin/llvm-ranlib"
-    -DCMAKE_C_FLAGS="$TARGET_CFLAGS"
-    -DCMAKE_CXX_FLAGS="$TARGET_CXXFLAGS"
-    -DCMAKE_ASM_FLAGS="$TARGET_CFLAGS"
-    -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
-  )
-
   log "${CYA}HOST_CFLAGS    = ${bold}$HOST_CFLAGS ${c0}\n"
-  log "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
   log "${CYA}TRIPLE         = ${bold}$triple ${c0}\n"
   log "${CYA}_WIN32_WINNT   = ${bold}${_WIN32_WINNT} ${c0}\n"
   sleep 1
@@ -846,7 +875,7 @@ build_phase1_linux() {
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="$prefix" \
       -DLLVM_ENABLE_PROJECTS="clang;lld;lldb" \
-      -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_TARGETS_TO_BUILD="$p1_llvm_targets" \
       -DLLDB_ENABLE_PYTHON=OFF \
       -DLLDB_ENABLE_LUA=OFF \
       -DLLDB_ENABLE_LIBEDIT=OFF \
@@ -873,6 +902,42 @@ build_phase1_linux() {
 
   generate_wrappers "$arch" "$triple" "$prefix"
 
+  log "${GRE}Phase 1 LLVM host tools for $arch ready.${c0}\n"
+}
+
+# PHASE 1 part B: build ONE target sysroot for the triple currently selected
+# by compute_arch_flags -- MinGW headers/CRT/winpthreads into $2/$triple, the
+# compiler-rt builtins into clang's resource dir, and libunwind/libc++abi/
+# libc++. Runs once per arch; the arm64 build runs it TWICE (an x86_64 host-
+# side sysroot to link the Phase 2 .exe against, then the aarch64 target
+# sysroot that ships). $1 = display label, doubling as the bld-tree subdir
+# (usually the arch; the arm64 x86_64 host-side pass uses a distinct label so
+# it can never collide with a real x86_64 build in the same run), $2 = the
+# Phase 1 prefix.
+build_phase1_sysroot() {
+  local arch="$1"
+  local prefix="$2"
+  local bld_path="$BLD_PATH/$arch"
+
+  # CMAKE flags for runtime (target) builds: drive the Phase 1 clang as a cross
+  # compiler for $triple.
+  local CMAKE_TARGET_ARGS=(
+    -DCMAKE_SYSTEM_NAME=Windows
+    -DCMAKE_C_COMPILER="$prefix/bin/clang"
+    -DCMAKE_CXX_COMPILER="$prefix/bin/clang++"
+    -DCMAKE_ASM_COMPILER="$prefix/bin/clang"
+    -DCMAKE_C_COMPILER_TARGET="$triple"
+    -DCMAKE_CXX_COMPILER_TARGET="$triple"
+    -DCMAKE_ASM_COMPILER_TARGET="$triple"
+    -DCMAKE_SYSROOT="$prefix/$triple"
+    -DCMAKE_AR="$prefix/bin/llvm-ar"
+    -DCMAKE_RANLIB="$prefix/bin/llvm-ranlib"
+    -DCMAKE_C_FLAGS="$TARGET_CFLAGS"
+    -DCMAKE_CXX_FLAGS="$TARGET_CXXFLAGS"
+    -DCMAKE_ASM_FLAGS="$TARGET_CFLAGS"
+    -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
+  )
+
   local AUTOTOOLS_TOOLS=(
     "CC=$prefix/bin/$wrap-cc" "CXX=$prefix/bin/$wrap-c++"
     "AR=$prefix/bin/llvm-ar" "RANLIB=$prefix/bin/llvm-ranlib"
@@ -880,6 +945,9 @@ build_phase1_linux() {
     "DLLTOOL=$prefix/bin/llvm-dlltool" "RC=$prefix/bin/llvm-windres"
     "OBJDUMP=$prefix/bin/llvm-objdump"
   )
+
+  log "${CYA}TARGET_CFLAGS  = ${bold}$TARGET_CFLAGS ${c0}\n"
+  log "${CYA}SYSROOT TRIPLE = ${bold}$triple ${c0}\n"
 
   # 2. MinGW-w64 headers
   create_dir "$bld_path/mingw-w64-headers"
@@ -1015,7 +1083,7 @@ build_phase1_linux() {
   execute "($arch P1): Installing libunwind/libc++abi/libc++" "Installing runtimes failed" \
       ninja install
 
-  log "${GRE}Phase 1 (Linux-hosted) toolchain for $arch ready.${c0}\n"
+  log "${GRE}Phase 1 sysroot for ${CYA}$triple${GRE} ready.${c0}\n"
 }
 
 # PHASE 2: cross-compile the Windows-hosted toolchain into $prefix using the
@@ -1048,11 +1116,14 @@ build_phase2_windows() {
   log "${CYA}CROSS CC       = ${bold}$p1/bin/clang (--target=$triple) ${c0}\n"
   sleep 1
 
-  # 1. Cross-compile LLVM (clang/lld/llvm-* as Windows .exe). The Phase 1 clang
-  #    is the cross compiler; LLVM_NATIVE_TOOL_DIR points at Phase 1's build-tree
-  #    tblgens (which must run on the build machine). Static link so the .exe
-  #    carry no libc++/libunwind/winpthread DLL deps. Built with the arch SIMD
-  #    baseline so clang.exe itself runs on the same CPU floor it targets.
+  # 1. Cross-compile LLVM (clang/lld/llvm-* as Windows .exe, built for
+  #    $host_triple). The Phase 1 clang is the cross compiler;
+  #    LLVM_NATIVE_TOOL_DIR points at Phase 1's build-tree tblgens (which must
+  #    run on the build machine). Static link so the .exe carry no
+  #    libc++/libunwind/winpthread DLL deps. Built with HOSTEXE_CFLAGS: for the
+  #    x86 archs that is the arch SIMD baseline, so clang.exe itself runs on
+  #    the same CPU floor it targets; for arm64 the .exe are x86_64 (plain
+  #    x86-64 baseline) while LLVM_DEFAULT_TARGET_TRIPLE stays aarch64.
   #    -pthread is required: CMake assumes Win32 native threads for a Windows
   #    target and links no thread lib, but our libc++/LLVM use pthreads, so we
   #    force clang to pull in winpthreads (-lpthread) at compile and link time.
@@ -1113,13 +1184,13 @@ build_phase2_windows() {
       -DCMAKE_SYSTEM_NAME=Windows \
       -DCMAKE_C_COMPILER="$p1/bin/clang" \
       -DCMAKE_CXX_COMPILER="$p1/bin/clang++" \
-      -DCMAKE_C_COMPILER_TARGET="$triple" \
-      -DCMAKE_CXX_COMPILER_TARGET="$triple" \
-      -DCMAKE_SYSROOT="$p1/$triple" \
+      -DCMAKE_C_COMPILER_TARGET="$host_triple" \
+      -DCMAKE_CXX_COMPILER_TARGET="$host_triple" \
+      -DCMAKE_SYSROOT="$p1/$host_triple" \
       -DCMAKE_AR="$p1/bin/llvm-ar" \
       -DCMAKE_RANLIB="$p1/bin/llvm-ranlib" \
-      -DCMAKE_RC_COMPILER="$p1/bin/llvm-windres" \
-      -DCMAKE_FIND_ROOT_PATH="$p1/$triple" \
+      -DCMAKE_RC_COMPILER="$p1/bin/$host_wrap-windres" \
+      -DCMAKE_FIND_ROOT_PATH="$p1/$host_triple" \
       -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
       -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
       -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
@@ -1127,7 +1198,7 @@ build_phase2_windows() {
       -DLLVM_TABLEGEN="$native_tools/llvm-tblgen" \
       -DCLANG_TABLEGEN="$native_tools/clang-tblgen" \
       -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb;polly" \
-      -DLLVM_TARGETS_TO_BUILD="X86" \
+      -DLLVM_TARGETS_TO_BUILD="$llvm_targets" \
       -DLLVM_POLLY_LINK_INTO_TOOLS=ON \
       -DLLDB_TABLEGEN="$native_tools/lldb-tblgen" \
       -DLLDB_ENABLE_PYTHON=OFF \
@@ -1136,7 +1207,7 @@ build_phase2_windows() {
       -DLLDB_ENABLE_CURSES=OFF \
       -DLLDB_ENABLE_LIBXML2=OFF \
       -DLLDB_INCLUDE_TESTS=OFF \
-      -DLLVM_HOST_TRIPLE="$triple" \
+      -DLLVM_HOST_TRIPLE="$host_triple" \
       -DLLVM_DEFAULT_TARGET_TRIPLE="$triple" \
       -DLLVM_ENABLE_ASSERTIONS=OFF \
       -DLLVM_INCLUDE_TESTS=OFF \
@@ -1152,8 +1223,8 @@ build_phase2_windows() {
       -DCLANG_DEFAULT_RTLIB=compiler-rt \
       -DCLANG_DEFAULT_UNWINDLIB=libunwind \
       -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
-      -DCMAKE_C_FLAGS="$TARGET_CFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
-      -DCMAKE_CXX_FLAGS="$TARGET_CXXFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
+      -DCMAKE_C_FLAGS="$HOSTEXE_CFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
+      -DCMAKE_CXX_FLAGS="$HOSTEXE_CFLAGS -pthread -D_WIN32_WINNT=$WIN32_WINNT" \
       -DCMAKE_EXE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
       -DCMAKE_SHARED_LINKER_FLAGS="-pthread $STRIP_FLAG" \
       -DCMAKE_MODULE_LINKER_FLAGS="-pthread $STRIP_FLAG" \
@@ -1217,9 +1288,12 @@ build_phase2_windows() {
   #     libLLVM-*.dll, libclang-cpp.dll, lld, llvm-*), so every module resolves
   #     libc++ from the SAME DLL -> one std::error_code category singleton (see
   #     the Phase 1 runtimes note). The host binaries were linked against it in
-  #     step 1; Windows loads it from the exe's own directory (bin/).
+  #     step 1; Windows loads it from the exe's own directory (bin/). Sourced
+  #     from Phase 1's HOST-triple sysroot: for the x86 archs that is the same
+  #     sysroot copied above, but for arm64 the .exe need the x86_64 libc++.dll,
+  #     which the shipped aarch64 sysroot does not contain.
   execute "($arch P2): Installing shared libc++.dll into host bin/" "Failed to install libc++.dll" \
-      cp -av "$prefix/$triple/bin/"libc++*.dll "$prefix/bin/"
+      cp -av "$p1/$host_triple/bin/"libc++*.dll "$prefix/bin/"
   # Keep TARGET programs self-contained: drop the shared import lib (and the now-
   # unreferenced sysroot DLL) so the deployed sysroot's default -lc++ resolves to
   # the static libc++.a -- target .exe/.dll stay dependency-free for XP, exactly
@@ -1236,16 +1310,16 @@ build_phase2_windows() {
   local _tool _cfg
   for _tool in gendef genidl genpeimg widl; do
     if [ "$_tool" = widl ]; then
-      _cfg="--host=$triple --target=$triple --prefix=$prefix --with-widl-includedir=$prefix/$triple/include"
+      _cfg="--host=$host_triple --target=$triple --prefix=$prefix --with-widl-includedir=$prefix/$triple/include"
     else
-      _cfg="--host=$triple --prefix=$prefix/$triple"
+      _cfg="--host=$host_triple --prefix=$prefix/$triple"
     fi
     create_dir "$bld_path/$_tool-win"
     change_dir "$bld_path/$_tool-win"
     execute "($arch P2): Configuring MinGW $_tool (Windows)" "Configuring $_tool failed" \
         "$SRC_PATH/mingw-w64/mingw-w64-tools/$_tool/configure" --build="$BUILD" \
         $_cfg \
-        "CC=$p1/bin/$wrap-cc" CFLAGS="$AUTOTOOLS_CFLAGS"
+        "CC=$p1/bin/$host_wrap-cc" CFLAGS="$HOSTEXE_CFLAGS"
     execute "($arch P2): Building MinGW $_tool (Windows)" "Building $_tool failed" \
         make -j $JOB_COUNT $VFLAGS
     execute "($arch P2): Installing MinGW $_tool (Windows)" "Installing $_tool failed" \
@@ -1259,9 +1333,9 @@ build_phase2_windows() {
   create_dir "$bld_path/make-win"
   change_dir "$bld_path/make-win"
   execute "($arch P2): Configuring GNU make (Windows)" "Configuring make failed" \
-      "$SRC_PATH/make/configure" --build="$BUILD" --host="$triple" \
+      "$SRC_PATH/make/configure" --build="$BUILD" --host="$host_triple" \
       --disable-nls --disable-dependency-tracking \
-      "CC=$p1/bin/$wrap-cc" CFLAGS="$AUTOTOOLS_CFLAGS -std=gnu17"
+      "CC=$p1/bin/$host_wrap-cc" CFLAGS="$HOSTEXE_CFLAGS -std=gnu17"
   execute "($arch P2): Building GNU make (Windows)" "Building make failed" \
       make -j $JOB_COUNT $VFLAGS
   execute "($arch P2): Installing mingw32-make.exe + make.exe" "Installing make failed" \
@@ -1270,17 +1344,17 @@ build_phase2_windows() {
 
   # 4. Windows toolchain wrappers + clang config, then the extra MSVC-compat
   #    headers and the version manifest.
-  generate_wrappers_windows "$arch" "$triple" "$prefix" "$p1/bin/$wrap-cc" "$bld_path"
+  generate_wrappers_windows "$arch" "$triple" "$prefix" "$p1/bin/$host_wrap-cc" "$bld_path"
 
   # Host-side utilities from assets/src -> bin/ as Windows .exe, like gendef.exe.
-  # Built LAST with the Phase 1 cross compiler (wrapper) + the arch SIMD baseline
-  # (AUTOTOOLS_CFLAGS, so they run on the target CPU floor), -municode (they use a
+  # Built LAST with the Phase 1 cross compiler (host wrapper) + HOSTEXE_CFLAGS
+  # (the CPU floor of the machine the toolchain RUNS on), -municode (they use a
   # Unicode wmain entry), capped at C17 (-std=gnu17) for gcc 11.
   local _t _n _src _xf
   for _t in "peports:peports.c" "pkg-config:pkg-config.c" "xxd:rexxd.c" "uuidgen:uuidgen.c"; do
     _n=${_t%%:*}; _src=${_t#*:}; _xf=""; [ "$_n" = xxd ] && _xf="-funroll-loops"
     execute "($arch P2): Building host tool $_n.exe" "Building $_n failed" \
-        "$p1/bin/$wrap-cc" -municode $AUTOTOOLS_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
+        "$p1/bin/$host_wrap-cc" -municode $HOSTEXE_CFLAGS -std=gnu17 $_xf -s "$HERE/assets/src/$_src" -o "$prefix/bin/$_n.exe"
   done
 
   # mingw-ver.exe -- one binary that reports the whole toolchain at a glance.
@@ -1294,13 +1368,13 @@ build_phase2_windows() {
   _mv_mingw=$(git_ref "$SRC_PATH/mingw-w64" "$MINGW_W64_BRANCH")
   _mv_cref=$(git_ref "$SRC_PATH/llvm-project" "$LLVM_BRANCH")
   _mv_cfg=$(grep -m1 '^timestamp=' "$SRC_PATH/config.guess" | cut -d"'" -f2)
-  [ "$arch" = x86_64 ] && _mv_bits="64-bit" || _mv_bits="32-bit"
+  case "$arch" in x86_64|aarch64) _mv_bits="64-bit";; *) _mv_bits="32-bit";; esac
   [ "$ENABLE_THREADS" ] && _mv_thr="winpthreads (posix)" || _mv_thr="none"
   _mv_pd=$(printf '' | "$p1/bin/$wrap-cc" $SIMD_FLAGS ${MARCH:+-march=$MARCH} -dM -E - 2>/dev/null)
-  case "$_mv_pd" in *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
+  case "$_mv_pd" in *__ARM_NEON*) _mv_simd="NEON (ARMv8-A)";; *__AVX512F__*) _mv_simd="AVX-512";; *__AVX2__*) _mv_simd="AVX2";; *__AVX__*) _mv_simd="AVX";; *__SSE4_2__*) _mv_simd="SSE4.2";; *__SSE4_1__*) _mv_simd="SSE4.1";; *__SSSE3__*) _mv_simd="SSSE3";; *__SSE3__*) _mv_simd="SSE3";; *__SSE2__*) _mv_simd="SSE2";; *__SSE__*) _mv_simd="SSE";; *__MMX__*) _mv_simd="MMX";; *) _mv_simd="x87 (no SIMD)";; esac
   case "$_mv_pd" in *__SEH__*) _mv_exc="SEH";; *__USING_SJLJ_EXCEPTIONS__*) _mv_exc="SJLJ";; *) _mv_exc="DWARF (DW2)";; esac
   execute "($arch P2): Building host tool mingw-ver.exe" "Building mingw-ver failed" \
-      "$p1/bin/$wrap-c++" $AUTOTOOLS_CFLAGS -std=gnu++17 -s \
+      "$p1/bin/$host_wrap-c++" $HOSTEXE_CFLAGS -std=gnu++17 -s \
       -DMV_KIND='"LLVM/Clang"' -DMV_STDLIB='"libc++"' -DMV_RTLIB='"compiler-rt + libunwind"' \
       -DMV_COMPILER="\"$_mv_cc\"" \
       -DMV_MINGW_REF="\"$_mv_mingw\"" -DMV_COMPILER_REF="\"$_mv_cref\"" \
@@ -1395,7 +1469,20 @@ build() {
     log "${YEL}=== ($arch) --clang-format: reusing existing Phase 1 toolchain + build tree ===${c0}\n"
   else
     log "${GRE}=== ($arch) Starting Phase 1: Linux-hosted cross toolchain ===${c0}\n"
-    build_phase1_linux "$arch" "$linux_prefix"
+    build_phase1_llvm "$arch" "$linux_prefix"
+    if [ "$arch" = "aarch64" ]; then
+      # The arm64 deliverable's .exe are x86_64, so Phase 1 also needs an
+      # x86_64 sysroot (CRT/winpthreads/libc++) for Phase 2 to link them
+      # against. Build it with the x86_64 arch flags (compute_arch_flags is
+      # re-run to swap the globals, then restored), under its own bld label so
+      # it can never collide with a real x86_64 build in the same run. The
+      # x86_64 wrappers make the Phase 1 clang reachable for that side.
+      generate_wrappers x86_64 x86_64-w64-mingw32 "$linux_prefix"
+      compute_arch_flags x86_64
+      build_phase1_sysroot arm64-x64host "$linux_prefix"
+      compute_arch_flags aarch64
+    fi
+    build_phase1_sysroot "$arch" "$linux_prefix"
   fi
 
   log "${GRE}=== ($arch) Starting Phase 2: Windows-hosted toolchain ===${c0}\n"
@@ -1569,6 +1656,7 @@ while :; do
     --crtlib)
         if [ "$2" ]; then
           LINKED_RUNTIME="$2"
+          GOT_CRTLIB=1
           shift
         else
           arg_error "'--crtlib' requires a non-empty option argument"
@@ -1576,6 +1664,7 @@ while :; do
         ;;
     --crtlib=?*)
         LINKED_RUNTIME=${1#*=}
+        GOT_CRTLIB=1
         ;;
     --crtlib=)
         arg_error "'--crtlib' requires a non-empty option argument"
@@ -1633,9 +1722,13 @@ while :; do
     x86_64|x64)
         BUILD_X86_64=1
         ;;
+    arm64|aarch64|--arm)
+        BUILD_ARM64=1
+        ;;
     -a|--all)
-        # build every arch; each picks its own _WIN32_WINNT default at
-        # dispatch unless the user passed --win32-winnt
+        # build every x86 arch; each picks its own _WIN32_WINNT default at
+        # dispatch unless the user passed --win32-winnt. arm64 is opt-in
+        # (experimental), so --all does not imply it; -a --arm builds all four.
         BUILD_I586=1
         BUILD_I686=1
         BUILD_X86_64=1
@@ -1721,7 +1814,7 @@ if [ "$PATCHES_ONLY" ]; then
   exit 0
 fi
 
-NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64))
+NUM_BUILDS=$((BUILD_I586 + BUILD_I686 + BUILD_X86_64 + BUILD_ARM64))
 # --download-sources only clones the repos and exits, so it needs no arch
 if [ "$NUM_BUILDS" -eq 0 ] && [ ! "$JUST_SOURCES" ]; then
   arg_error "No ARCH was specified"
@@ -1783,16 +1876,25 @@ elif [ "$CLANG_FORMAT_ONLY" ]; then
   TOTAL_STEPS=$((TOTAL_STEPS + 3 * NUM_BUILDS))
 else
   TOTAL_STEPS=$((TOTAL_STEPS + THREADS_STEPS + BUILD_STEPS + PACKAGE_STEPS))
+  # arm64 builds an extra x86_64 host-side sysroot in Phase 1: headers(2) +
+  # crt(3) + compiler-rt(3) + runtimes(3) = 11, plus winpthreads(3).
+  if [ "$BUILD_ARM64" ]; then
+    ARM64_EXTRA=11
+    [ "$ENABLE_THREADS" ] && ARM64_EXTRA=$((ARM64_EXTRA + 3))
+    TOTAL_STEPS=$((TOTAL_STEPS + ARM64_EXTRA))
+  fi
 fi
 
 if [ "$PREFIX" ]; then
   I586_PREFIX="$PREFIX"
   I686_PREFIX="$PREFIX"
   X86_64_PREFIX="$PREFIX"
+  ARM64_PREFIX="$PREFIX"
 else
   I586_PREFIX="$ROOT_PATH/i586_llvm"
   I686_PREFIX="$ROOT_PATH/i686_llvm"
   X86_64_PREFIX="$ROOT_PATH/x64_llvm"
+  ARM64_PREFIX="$ROOT_PATH/arm64_llvm"
 fi
 
 CURRENT_STEP=1
@@ -1879,12 +1981,29 @@ if [ "$BUILD_X86_64" ]; then
   ADD_TO_PATH+=("'$X86_64_PREFIX/bin'")
 fi
 
+if [ "$BUILD_ARM64" ]; then
+  # Windows on ARM64 only exists from Windows 10 (0x0A00) up, and its mingw
+  # runtime of record is the UCRT (always present on 10+; llvm-mingw likewise
+  # supports arm64 only with ucrt), so default both unless the user explicitly
+  # chose otherwise. Runs last so the ucrt default can't leak into the x86
+  # builds of a combined run. The x86 SIMD flags belong to the x86
+  # deliverables, so reset them: the arm64 build's x86_64 host-side passes
+  # always use the plain x86-64 baseline.
+  [ "$GOT_WIN32_WINNT" ] || WIN32_WINNT="0x0A00"
+  [ "$GOT_CRTLIB" ] || LINKED_RUNTIME="ucrt"
+  USE_MMX=false USE_SSE2=false USE_SSE3=false USE_SSE41=false USE_SSE42=false
+  USE_AVX=false USE_AVX2=false USE_AVX512=false
+  build aarch64 "$ARM64_PREFIX"
+  ADD_TO_PATH+=("'$ARM64_PREFIX/bin'")
+fi
+
 # Reaching here means every requested build succeeded (build() aborts on error).
 # Package each built arch; the 64-bit one is named x64.zip.
 if [ "$PACKAGE" ]; then
   [ "$BUILD_I586" ]   && package_arch i586_llvm i586_llvm
   [ "$BUILD_I686" ]   && package_arch i686_llvm i686_llvm
   [ "$BUILD_X86_64" ] && package_arch x64_llvm x64_llvm
+  [ "$BUILD_ARM64" ]  && package_arch arm64_llvm arm64_llvm
 fi
 
 if [ ! "$KEEP_ARTIFACTS" ]; then
