@@ -51,7 +51,7 @@ LOG_FILE="$ROOT_PATH/build.log"
 # Source URLs, using GitHub instead of originals for cloning speed
 MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64" # https://git.code.sf.net/p/mingw-w64/mingw-w64
 LLVM_URL="https://github.com/llvm/llvm-project"
-MAKE_URL="https://ftpmirror.gnu.org/make" # GNU make tarballs (ftpmirror redirects to a nearby GNU mirror)
+MAKE_URL="https://ftp.gnu.org/gnu/make" # GNU make tarballs
 # What branches to checkout
 MINGW_W64_BRANCH="v14.x"
 LLVM_BRANCH="release/22.x"
@@ -417,6 +417,11 @@ apply_patches() {
   # 2003 / XP x64. All arches/targets benefit, so apply unconditionally.
   execute "" "Failed to apply mingw-time32_win2k3.patch" \
       git apply --reject ../patches/mingw-time32_win2k3.patch
+  # winpthreads' constructor(0) priority is a hard error with GCC on aarch64
+  # (no ctor-priority support in its PE target); self-guarded fallback to a
+  # plain constructor there. No-op for x86 and clang -> applied unconditionally.
+  execute "" "Failed to apply mingw-winpthreads-arm64-ctor.patch" \
+      git apply --reject ../patches/mingw-winpthreads-arm64-ctor.patch
   execute "" "Failed to apply mingw-headers.patch" \
       git apply --reject ../patches/mingw-headers.patch
   execute "" "Unable to mark patches as applied" \

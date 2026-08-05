@@ -48,7 +48,8 @@ The arm64 (aarch64) build targets ARMv8-A and Windows 10+ with the UCRT. Request
  - There are flags to control the minimum Windows target, and to adjust SIMD options, all the way from SSE to SSE4 to AVX, AVX2, and (experimental) AVX-512
  - arm64 is a cross TARGET in all four scripts: the toolchain itself always runs on x64 (Linux x64 for the `*_linux` scripts, x64 Windows .exe for the `*_win`
    scripts — which also run on a WoA box via its built-in x64 emulation). The LLVM flavor supports the target fully; the GCC flavor's aarch64-w64-mingw32
-   target has solid C but no C++ exceptions/SEH yet (upstream work, expected around GCC 17).
+   target has solid C but no C++ exceptions/SEH yet (upstream work, expected around GCC 17), and no `_Decimal32`/`_Decimal64`/`_Decimal128` (libbid does not
+   understand the target's 64-bit `long double`; decimal float is configured off — the MSVC WoA ABI has no decimal types either).
 
 ## Usage
 `mingw_*.sh` __&lt;arch&gt; [options]__

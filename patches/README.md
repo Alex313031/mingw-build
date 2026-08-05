@@ -31,6 +31,10 @@ A notable exception is the mingw-rand_s-win2k.patch, which I made myself for Min
                                                   later (NT 5.2 exports [`_time64`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/time-time32-time64) but not `_time32`). Any x64 program that pulls in `mkstemp`/`mkdtemp` (e.g. anything using temp files) therefore fails to load on
                                                   Server 2003 / XP x64. Switches the seed to `_time64()`, which MinGW provides via a runtime [`GetSystemTime`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) emulation fallback, so it is safe on every target and arch. Applied unconditionally.
 
+[mingw-winpthreads-arm64-ctor.patch](./mingw/mingw-winpthreads-arm64-ctor.patch) - Fixes the winpthreads build for the arm64 target with GCC. GCC's aarch64 PE target does not support constructor priorities, so the
+                                                  `__attribute__((constructor(0)))` on `winpthreads_init` (which fills runtime-resolved kernel32 function pointers) is a hard *"constructor priorities are not supported"* error there. Falls back to a plain
+                                                  unprioritized constructor for GCC-on-aarch64 only (winpthreads' historical behavior; the pointers are NULL-guarded at their call sites regardless). Self-guarding, no-op for x86 and clang; applied unconditionally.
+
 [sdkddkver.h](./mingw/sdkddkver.h) and [winsdkver.h](./mingw/winsdkver.h) - Custom written replacements for these MSVC's headers, with expanded macros and definitions for old Windows.
 
 ### GCC
@@ -40,6 +44,10 @@ A notable exception is the mingw-rand_s-win2k.patch, which I made myself for Min
 [gcc-trap-terminate.patch](./gcc/gcc-trap-terminate.patch) - Replaces `std::terminate`'s __std::abort__ function with a __&#95;&#95;builtin_trap__ trap instruction.
 
 [gcc-avx-misaligned.patch](./gcc/gcc-avx-misaligned.patch) - Treats AVX register spills as always unaligned, removing the need for `-Wa,-muse-unaligned-vector-move` when targeting AVX-capable hardware ([GCC PR54412](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412)).
+
+[gcc-arm64-pthread-default.patch](./gcc/gcc-arm64-pthread-default.patch) - Makes posix-threads builds for the arm64 target link `-lpthread` (winpthreads) by default, like the x86 mingw targets do. Upstream's new `aarch64-*-mingw*` stanza
+                                                  forgets to add `i386/mingw-pthread.h` (the arch-neutral `TARGET_USE_PTHREAD_BY_DEFAULT` define) to `tm_file`, so a plain `aarch64-w64-mingw32-g++ hello.cc` fails to link with undefined
+                                                  `pthread_*` references from libstdc++ and libgcc's SJLJ unwinder. Mirrors upstream's own x86 conditional; no-op for x86 and win32-threads builds, applied unconditionally.
 
 [gcc-tzdb-getdynamic.patch](./gcc/gcc-tzdb-getdynamic.patch) - Fixes C++20 compatability by using [GetTimeZoneInformation](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-gettimezoneinformation) instead of
                                                                Vista+ [GetDynamicTimeZoneInformation](https://learn.microsoft.com/en-us/windows/win32/api/timezoneapi/nf-timezoneapi-getdynamictimezoneinformation).

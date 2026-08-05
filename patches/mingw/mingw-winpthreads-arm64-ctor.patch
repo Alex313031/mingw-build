@@ -1,0 +1,37 @@
+GCC's aarch64-w64-mingw32 target does not support constructor priorities (its
+PE/COFF init machinery never grew the sorted-section support x86 mingw has), so
+winpthreads' __attribute__((constructor(0))) on winpthreads_init() -- added
+upstream so the init runs before any user constructor that might call pthread
+functions -- is a hard "constructor priorities are not supported" error there,
+breaking every aarch64 GCC build of winpthreads. clang supports the priority on
+aarch64 PE and is unaffected.
+
+Fall back to a plain, unprioritized __attribute__((constructor)) for GCC on
+aarch64 only: that is winpthreads' pre-priority historical behavior (and what
+the MSVC build's .CRT$XCT placement approximates), so the init still runs
+during CRT startup, merely unordered relative to other constructors -- and the
+function pointers it fills are NULL-guarded at their call sites regardless.
+Self-guarding (#if defined(__aarch64__) && !defined(__clang__)), so x86 and all
+clang builds are unaffected; applied unconditionally.
+
+diff --git a/mingw-w64-libraries/winpthreads/src/misc.c b/mingw-w64-libraries/winpthreads/src/misc.c
+index b2d5ceb..e2538d2 100644
+--- a/mingw-w64-libraries/winpthreads/src/misc.c
++++ b/mingw-w64-libraries/winpthreads/src/misc.c
+@@ -42,8 +42,16 @@ BOOL (WINAPI *_pthread_get_handle_information) (HANDLE, LPDWORD) = NULL;
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wprio-ctor-dtor"
+ #endif
++#if defined(__aarch64__) && !defined(__clang__)
++/* GCC's aarch64 PE target does not support constructor priorities and
++ * rejects them with a hard error.  Fall back to an unprioritized
++ * constructor -- winpthreads' historical behavior: it still runs during
++ * CRT init, merely unordered relative to other constructors. */
++__attribute__((constructor))
++#else
+ __attribute__((constructor(0)))
+ #endif
++#endif
+ static void winpthreads_init(void)
+ {
+     HMODULE mod = GetModuleHandleA("kernel32.dll");

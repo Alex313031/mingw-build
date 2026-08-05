@@ -1,0 +1,27 @@
+Link winpthreads by default on aarch64-w64-mingw32 posix-threads builds
+
+For x86 targets configured with --enable-threads=posix, config.gcc adds
+i386/mingw-pthread.h (a one-line, arch-neutral TARGET_USE_PTHREAD_BY_DEFAULT
+define) to tm_file, which flips mingw/mingw32.h's LIB_SPEC from
+"%{pthread:-lpthread}" to linking -lpthread by default (opt out with
+-no-pthread). The new aarch64-*-mingw* stanza sets thread_file='posix' but
+never adds that header, so plain "aarch64-w64-mingw32-g++ hello.cc" dies at
+link with undefined pthread_* references -- libstdc++ and libgcc's
+unwind-sjlj both depend on winpthreads in a posix-threads build. Mirror the
+x86 conditional in the aarch64 stanza. No-op for x86 and for win32-threads
+builds.
+
+diff --git a/gcc/config.gcc b/gcc/config.gcc
+index 7434217..c7d1c73 100644
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -1325,6 +1325,9 @@ aarch64-*-mingw*)
+ 	tm_file="${tm_file} aarch64/aarch64-abi-ms.h"
+ 	tm_file="${tm_file} aarch64/aarch64-coff.h"
+ 	tm_file="${tm_file} aarch64/cygming.h"
++	if test x$enable_threads = xposix ; then
++		tm_file="${tm_file} i386/mingw-pthread.h"
++	fi
+ 	tm_file="${tm_file} mingw/mingw32.h"
+ 	tm_file="${tm_file} mingw/mingw-stdint.h"
+ 	tm_file="${tm_file} mingw/winnt.h"

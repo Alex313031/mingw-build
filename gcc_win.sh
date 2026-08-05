@@ -29,7 +29,7 @@ LOG_FILE="$ROOT_PATH/build.log"
 MINGW_W64_URL="https://github.com/mingw-w64/mingw-w64" # https://git.code.sf.net/p/mingw-w64/mingw-w64
 BINUTILS_URL="https://github.com/rtems/sourceware-mirror-binutils-gdb" # https://git.sr.ht/~sourceware/binutils-gdb
 GCC_URL="https://github.com/gcc-mirror/gcc" # https://git.sr.ht/~sourceware/gcc
-MAKE_URL="https://ftpmirror.gnu.org/make" # GNU make tarballs (ftpmirror redirects to a nearby GNU mirror)
+MAKE_URL="https://ftp.gnu.org/gnu/make" # GNU make tarballs
 # What branches to checkout
 MINGW_W64_BRANCH="v14.x"
 BINUTILS_BRANCH="binutils-2_47-branch"
@@ -307,6 +307,12 @@ apply_patches() {
       git apply --reject ../patches/gcc-trap-terminate.patch
   execute "" "Failed to apply gcc-avx-misaligned.patch" \
       git apply --reject ../patches/gcc-avx-misaligned.patch
+  # The aarch64-*-mingw* stanza forgets i386/mingw-pthread.h for posix-threads
+  # builds, so plain g++ links die with undefined pthread_* (libstdc++ and
+  # unwind-sjlj need winpthreads). Mirrors upstream's own x86 conditional;
+  # no-op for x86 and win32-threads -> applied unconditionally.
+  execute "" "Failed to apply gcc-arm64-pthread-default.patch" \
+      git apply --reject ../patches/gcc-arm64-pthread-default.patch
   if (( WIN32_WINNT < 0x0600 )); then
     execute "" "Failed to apply gcc-tzdb-getdynamic.patch" \
         git apply --reject ../patches/gcc-tzdb-getdynamic.patch
@@ -334,6 +340,11 @@ apply_patches() {
   # 2003 / XP x64. All arches/targets benefit, so apply unconditionally.
   execute "" "Failed to apply mingw-time32_win2k3.patch" \
       git apply --reject ../patches/mingw-time32_win2k3.patch
+  # winpthreads' constructor(0) priority is a hard error with GCC on aarch64
+  # (no ctor-priority support in its PE target); self-guarded fallback to a
+  # plain constructor there. No-op for x86 and clang -> applied unconditionally.
+  execute "" "Failed to apply mingw-winpthreads-arm64-ctor.patch" \
+      git apply --reject ../patches/mingw-winpthreads-arm64-ctor.patch
   execute "" "Failed to apply mingw-headers.patch" \
       git apply --reject ../patches/mingw-headers.patch
   execute "" "Unable to mark patches as applied" \
@@ -779,6 +790,12 @@ USE_AVX512=$avx512"
   change_dir "$bld_path/gcc"
 
   local GCC_FLAGS="--with-arch=$MARCH $x86_dwarf"
+  # libgcc's decimal-float runtime (libbid) only understands x87 80-bit and
+  # IEEE binary128 long doubles; aarch64 PE's long double is 64-bit, so its
+  # binary80 converters read uninitialized union bytes -- a -Werror hard error
+  # in libgcc, and genuinely broken code. The WoA ABI has no _Decimal* types
+  # anyway, so decimal float is switched off rather than papered over.
+  [ "$arch" = "aarch64" ] && GCC_FLAGS+=" --disable-decimal-float"
   execute "($arch): Configuring GCC with arch: $MARCH" "Configuring GCC failed" \
       "$SRC_PATH/gcc/configure" --target="$host" --disable-shared \
       --enable-static --disable-multilib --prefix="$prefix" \

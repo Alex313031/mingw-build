@@ -357,6 +357,11 @@ apply_patches() {
   # 2003 / XP x64. All arches/targets benefit, so apply unconditionally.
   execute "" "Failed to apply mingw-time32_win2k3.patch" \
       git apply --reject ../patches/mingw-time32_win2k3.patch
+  # winpthreads' constructor(0) priority is a hard error with GCC on aarch64
+  # (no ctor-priority support in its PE target); self-guarded fallback to a
+  # plain constructor there. No-op for x86 and clang -> applied unconditionally.
+  execute "" "Failed to apply mingw-winpthreads-arm64-ctor.patch" \
+      git apply --reject ../patches/mingw-winpthreads-arm64-ctor.patch
   execute "" "Failed to apply mingw-headers.patch" \
       git apply --reject ../patches/mingw-headers.patch
   execute "" "Unable to mark patches as applied" \
