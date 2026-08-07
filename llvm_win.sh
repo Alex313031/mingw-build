@@ -943,11 +943,17 @@ build_phase1_sysroot() {
     -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
   )
 
+  # RC must be the triple-prefixed windres symlink, not bare llvm-windres: llvm-rc
+  # derives the preprocessor --target from its own program name and otherwise
+  # falls back to the Phase 1 LLVM_DEFAULT_TARGET_TRIPLE. For arm64 that default
+  # is aarch64, but the arm64-x64host pass runs FIRST -- bare llvm-windres then
+  # preprocesses winpthreads' version.rc against the not-yet-installed aarch64
+  # sysroot ("winver.h not found"). Every other tool here is triple-agnostic.
   local AUTOTOOLS_TOOLS=(
     "CC=$prefix/bin/$wrap-cc" "CXX=$prefix/bin/$wrap-c++"
     "AR=$prefix/bin/llvm-ar" "RANLIB=$prefix/bin/llvm-ranlib"
     "STRIP=$prefix/bin/llvm-strip" "NM=$prefix/bin/llvm-nm"
-    "DLLTOOL=$prefix/bin/llvm-dlltool" "RC=$prefix/bin/llvm-windres"
+    "DLLTOOL=$prefix/bin/llvm-dlltool" "RC=$prefix/bin/$wrap-windres"
     "OBJDUMP=$prefix/bin/llvm-objdump"
   )
 
@@ -1129,6 +1135,10 @@ build_phase2_windows() {
   #    x86 archs that is the arch SIMD baseline, so clang.exe itself runs on
   #    the same CPU floor it targets; for arm64 the .exe are x86_64 (plain
   #    x86-64 baseline) while LLVM_DEFAULT_TARGET_TRIPLE stays aarch64.
+  #    CMAKE_ASM_COMPILER(_TARGET) must be pinned alongside C/CXX: LLVMSupport
+  #    assembles BLAKE3's fixed-ISA x86-64 .S for the host, and CMake gives the
+  #    ASM language no --target of its own -- bare clang then falls back to the
+  #    default triple (aarch64 for --arm) and rejects the SSE mnemonics.
   #    -pthread is required: CMake assumes Win32 native threads for a Windows
   #    target and links no thread lib, but our libc++/LLVM use pthreads, so we
   #    force clang to pull in winpthreads (-lpthread) at compile and link time.
@@ -1189,8 +1199,10 @@ build_phase2_windows() {
       -DCMAKE_SYSTEM_NAME=Windows \
       -DCMAKE_C_COMPILER="$p1/bin/clang" \
       -DCMAKE_CXX_COMPILER="$p1/bin/clang++" \
+      -DCMAKE_ASM_COMPILER="$p1/bin/clang" \
       -DCMAKE_C_COMPILER_TARGET="$host_triple" \
       -DCMAKE_CXX_COMPILER_TARGET="$host_triple" \
+      -DCMAKE_ASM_COMPILER_TARGET="$host_triple" \
       -DCMAKE_SYSROOT="$p1/$host_triple" \
       -DCMAKE_AR="$p1/bin/llvm-ar" \
       -DCMAKE_RANLIB="$p1/bin/llvm-ranlib" \
