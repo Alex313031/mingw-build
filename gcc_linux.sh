@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 SCRIPTNAME=$(basename "$0")
-SCRIPTVER="2.3.6"
+SCRIPTVER="2.3.7"
 
 export HERE=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_PATH="$HERE/build/linux_gcc"
@@ -354,7 +354,9 @@ git_ref() {
 
 # Write a VERSION.txt manifest into an arch's install prefix. All values are
 # gathered live: branch/commit from git, config.guess from its timestamp line,
-# the script name/version, and the effective build flags for that arch.
+# the script name/version, the build date, and the effective build flags for that
+# arch. The date recorded here is when this arch finished building; --package
+# refreshes it to the moment the .zip is made (see stamp_package_date).
 # $1 = arch, $2 = install prefix, $3 = arch-relevant flag lines (KEY=value\n...)
 write_version_file() {
   local arch="$1" prefix="$2" flag_lines="$3"
@@ -379,6 +381,8 @@ config.guess Version: $config_guess_ver
 Built using $SCRIPTNAME Version: $SCRIPTVER
 
 ---- Build Details ----
+
+Build Date: $(date '+%Y-%m-%d %H:%M:%S %Z')
 
 Arch: $arch
 
@@ -858,6 +862,16 @@ USE_AVX512=$avx512"
   log "${GRE}Done building for arch ${CYA}$arch ${c0}\n"
 }
 
+# Refresh an install prefix's VERSION.txt "Build Date" line to right now. The
+# manifest is written when an arch finishes building, which in a multi-arch run
+# can be hours before packaging starts, so re-stamp it here: the VERSION.txt
+# inside the .zip then records when that archive itself was created.
+stamp_package_date() {
+  local version_file="$1/VERSION.txt"
+  [ -f "$version_file" ] || return 0
+  sed -i "s|^Build Date: .*|Build Date: $(date '+%Y-%m-%d %H:%M:%S %Z')|" "$version_file"
+}
+
 # Zip an arch's install prefix into <root>/<pkgname>.zip. pkgname matches the
 # prefix dir name, so the archive carries a matching top-level folder. -y stores
 # symlinks AS symlinks instead of dereferencing each into a full duplicate copy,
@@ -868,6 +882,10 @@ package_arch() {
   local arch="$1" pkgname="$2"
   local dir="$ROOT_PATH/$arch"
   [ -d "$dir" ] || error_exit "Cannot package '$arch': '$dir' not found"
+
+  # date the archive before any staging copy, so the prefix and the zipped copy
+  # of VERSION.txt carry the same timestamp
+  stamp_package_date "$dir"
 
   change_dir "$ROOT_PATH"
   rm -f "$pkgname.zip"
